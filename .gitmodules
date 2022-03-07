@@ -1,3 +1,4 @@
 [submodule "rnu"]
 	path = rnu
 	url = https://github.com/johannes-braun/rnu
+	ignore = dirty
