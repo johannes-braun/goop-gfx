@@ -5,10 +5,42 @@
 #include <string>
 #include <rnu/camera.hpp>
 #include <graphics.hpp>
-#include <algorithm/anim.hpp>
+#include <animation/smooth.hpp>
 
 namespace goop
 {
+	struct input_key
+	{
+	public:
+		enum class state
+		{
+			up,
+			press,
+			down,
+			release
+		};
+
+		input_key(GLFWwindow* w, int key) : _window(w), _key(key) {}
+
+		state update() {
+			bool const is = glfwGetKey(_window, _key) == GLFW_PRESS;
+			if (_is != is)
+			{
+				_is = is;
+				return _is ? state::press : state::release;
+			}
+			else
+			{
+				return _is ? state::down : state::up;
+			}
+		}
+
+	private:
+		GLFWwindow* _window;
+		int _key;
+		bool _is = false;
+	};
+
 	class default_app
 	{
 	public:

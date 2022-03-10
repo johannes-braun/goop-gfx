@@ -43,7 +43,7 @@ add_library (goop STATIC
   "algorithm/cull.hpp"   
   "default_app.hpp"
   "default_app.cpp" 
-  "algorithm/anim.hpp")
+  "animation/smooth.hpp" "animation/animation.hpp" "file/gltf__WIP.hpp" "file/gltf__WIP.cpp" "animation/animation.cpp")
 target_compile_features(goop PUBLIC cxx_std_20)
 target_link_libraries(goop PUBLIC glfw glad::glad rnu::rnu)
 target_include_directories(goop PUBLIC ${STB_INCLUDE_DIR})
