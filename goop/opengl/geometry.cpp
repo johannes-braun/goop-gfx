@@ -95,6 +95,17 @@ namespace goop::opengl
     glVertexArrayElementBuffer(_vertex_array, _buffer);
   }
 
+  GLenum get_display_type(display_type type)
+  {
+    switch (type)
+    {
+    case display_type::outlines: return GL_LINES;
+    case display_type::surfaces: return GL_TRIANGLES;
+    case display_type::vertices: return GL_POINTS;
+    }
+    return GL_INVALID_ENUM;
+  }
+
   void geometry::draw_ranges(std::span<vertex_offset const> offsets)
   {
     glBindVertexArray(_vertex_array);
@@ -103,7 +114,7 @@ namespace goop::opengl
     for (auto const& offset : offsets)
       _indirects.push_back(make_indirect(offset));
 
-    glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, _indirects.data(), _indirects.size(), sizeof(indirect));
+    glMultiDrawElementsIndirect(get_display_type(display_type()), GL_UNSIGNED_INT, _indirects.data(), _indirects.size(), sizeof(indirect));
   }
 
   void geometry::draw_ranges(mapped_buffer_base<indirect> const& indirects, size_t count, ptrdiff_t first)
@@ -111,6 +122,6 @@ namespace goop::opengl
     glBindVertexArray(_vertex_array);
     auto const& gl_buffer = dynamic_cast<mapped_buffer<indirect> const&>(indirects);
     glBindBufferBase(GL_DRAW_INDIRECT_BUFFER, 0, gl_buffer.handle());
-    glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, reinterpret_cast<void const*>(first), count, sizeof(indirect));
+    glMultiDrawElementsIndirect(get_display_type(display_type()), GL_UNSIGNED_INT, reinterpret_cast<void const*>(first), count, sizeof(indirect));
   }
 }

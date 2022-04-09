@@ -20,6 +20,8 @@ namespace goop
     rnu::vec4 weights;
   };
 
+  vertex mix(vertex const& lhs, vertex const& rhs, float t);
+
   struct vertex_offset
   {
     std::ptrdiff_t vertex_offset;
@@ -35,6 +37,13 @@ namespace goop
     std::uint32_t first_index;
     std::uint32_t base_vertex;
     std::uint32_t base_instance;
+  };
+
+  enum class display_type
+  {
+    surfaces,
+    outlines,
+    vertices
   };
 
   static constexpr indirect make_indirect(vertex_offset const& offset)
@@ -60,6 +69,8 @@ namespace goop
     geometry_base& operator=(geometry_base&&) noexcept = default;
     ~geometry_base();
 
+    void set_display_type(display_type type);
+    display_type display_type() const;
     void clear();
     void free_client_memory();
     vertex_offset append_vertices(std::span<vertex const> vertices, std::span<index_type const> indices = {});
@@ -77,6 +88,7 @@ namespace goop
 
     mutable bool _dirty = false;
     mutable std::mutex _data_mutex;
+    goop::display_type _display_type;
     std::vector<vertex> _staging_vertices;
     std::vector<index_type> _staging_indices;
   };

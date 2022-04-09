@@ -43,7 +43,22 @@ add_library (goop STATIC
   "algorithm/cull.hpp"   
   "default_app.hpp"
   "default_app.cpp" 
-  "animation/smooth.hpp" "animation/animation.hpp" "file/gltf__WIP.hpp" "file/gltf__WIP.cpp" "animation/animation.cpp")
+  "animation/smooth.hpp" 
+  "animation/animation.hpp" 
+  "file/gltf__WIP.hpp" 
+  "file/gltf__WIP.cpp" 
+  "animation/animation.cpp"
+  "EXP_experimental.hpp"
+  "components/physics_component.hpp" 
+  "components/transform_component.hpp" 
+  "components/collider_component.hpp" 
+  "components/movement_component.hpp" 
+  "generic/primitives.hpp" 
+  "generic/primitives.cpp" 
+  "vectors/distance.hpp"
+  "vectors/vectors.hpp"
+  "vectors/vectors.cpp" 
+  "vectors/lines.hpp")
 target_compile_features(goop PUBLIC cxx_std_20)
 target_link_libraries(goop PUBLIC glfw glad::glad rnu::rnu)
 target_include_directories(goop PUBLIC ${STB_INCLUDE_DIR})

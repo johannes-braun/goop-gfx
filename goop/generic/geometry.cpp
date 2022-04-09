@@ -3,6 +3,19 @@
 
 namespace goop
 {
+  vertex mix(vertex const& lhs, vertex const& rhs, float t)
+  {
+    vertex v;
+    v.position = lhs.position * (1 - t) + rhs.position * t;
+    v.normal = normalize(lhs.normal + rhs.normal);
+    for (int i = 0; i < std::size(v.uv); ++i)
+      v.uv[i] = lhs.uv[i] * (1 - t) + rhs.uv[i] * t;
+    v.color = lhs.color * (1 - t) + rhs.color * t;
+    v.joints = t < 0.5 ? lhs.joints : rhs.joints;
+    v.weights = t < 0.5 ? lhs.weights : rhs.weights;
+    return v;
+  }
+
   geometry_base::~geometry_base() = default;
 
   void geometry_base::clear()
@@ -20,6 +33,16 @@ namespace goop
     _staging_vertices.shrink_to_fit();
     _staging_indices.clear();
     _staging_indices.shrink_to_fit();
+  }
+
+  void geometry_base::set_display_type(goop::display_type type)
+  {
+    _display_type = type;
+  }
+
+  display_type geometry_base::display_type() const
+  {
+    return _display_type;
   }
 
   vertex_offset geometry_base::append_vertices(std::span<vertex const> vertices, std::span<index_type const> indices)
@@ -42,17 +65,17 @@ namespace goop
       .vertex_offset = static_cast<ptrdiff_t>(_staging_vertices.size()),
       .vertex_count = vertex_count,
       .index_offset = static_cast<ptrdiff_t>(_staging_indices.size()),
-      .index_count = index_count
+      .index_count = index_count == 0 ? vertex_count : index_count
     };
 
     std::unique_lock lock(_data_mutex);
-    _staging_indices.resize(_staging_indices.size() + index_count);
+    _staging_indices.resize(_staging_indices.size() + offset.index_count);
     _staging_vertices.resize(_staging_vertices.size() + vertex_count);
 
     // If index count not specified or set to zero, assume a 1:1 relation between vertices and indices.
     if (index_count == 0)
     {
-      std::iota(std::next(_staging_indices.begin(), offset.index_offset), _staging_indices.end(), static_cast<index_type>(offset.vertex_offset));
+      std::iota(std::next(_staging_indices.begin(), offset.index_offset), _staging_indices.end(), /*static_cast<index_type>(offset.vertex_offset)*/0);
     }
     _dirty = true;
 
