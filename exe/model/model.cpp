@@ -434,63 +434,112 @@ float minimum_distance(rnu::vec2 v, rnu::vec2 w, rnu::vec2 p) {
   return rnu::norm(p - projection);
 }
 
-bool const scanline_test(rnu::vec2 a, rnu::vec2 b, rnu::vec2 r)
+int const scanline_test(rnu::vec2 a, rnu::vec2 b, rnu::vec2 r)
 {
   auto const s = b - a;
+  auto const n = rnu::vec2(-s.y, s.x);
   auto const k = a - r;
   auto const t = (-k.y) / (s.y);
 
   auto const cross = [](auto x, auto y) { return x.x * y.y - x.y * y.x; };
   auto const u = (cross(k, s)) / s.y;
 
-  return u > 0 && t >= 0 && t < 1;
+  bool const intersects = u > 0 && t >= 0 && t <= 1;
+
+  if (!intersects)
+    return 0;
+
+  return rnu::sign(dot(n, k));
 }
+
+float signed_distance(std::vector<goop::lines::line> const& polygon, rnu::vec2 point)
+{
+  float dmin = std::numeric_limits<float>::max();
+  int intersections = 0;
+
+  for (auto const& line : polygon)
+  {
+    auto const d = minimum_distance(line.start, line.end, point);
+    intersections += scanline_test(line.start, line.end, point);
+
+    if (abs(d) < abs(dmin))
+      dmin = d;
+  }
+  return (intersections == 0 ? 1 : -1) * dmin;
+}
+
+void emplace(std::vector<goop::lines::line> const& polygon, int basew, int baseh, float scale, int padding, float sdfw, std::vector<std::uint8_t>& img, int iw, int ih, int x, int y)
+{
+  auto const at = [&](int x, int y) -> std::uint8_t& { return img[x + y * iw]; };
+
+  int const w = basew * scale + padding * 2;
+  int const h = baseh * scale + padding * 2;
+
+  for (int i = 0; i < w; ++i)
+  {
+    for (int j = 0; j < h; ++j)
+    {
+      auto const signed_distance = ::signed_distance(polygon, { (i-padding) / scale, (j - padding) / scale }) * scale;
+      auto min = -sdfw;
+      auto max = sdfw;
+      at(x + i + padding, y + j + padding) = (1 - std::clamp((signed_distance - min) / (max - min), 0.f, 1.f)) * 255;
+    }
+  }
+}
+
+#include <vectors/font.hpp>
 
 int main()
 {
-  goop::vector_image vimg;
-  //vimg.parse("M12,21.35L10.55,20.03C5.4,15.36 2,12.27 2,8.5C2,5.41 4.42,3 7.5,3C9.24,3 10.91,3.81 12,5.08C13.09,3.81 14.76,3 16.5,3C19.58,3 22,5.41 22,8.5C22,12.27 18.6,15.36 13.45,20.03L12,21.35Z");
-  //vimg.parse("M12.1,18.55L12,18.65L11.89,18.55C7.14,14.24 4,11.39 4,8.5C4,6.5 5.5,5 7.5,5C9.04,5 10.54,6 11.07,7.36H12.93C13.46,6 14.96,5 16.5,5C18.5,5 20,6.5 20,8.5C20,11.39 16.86,14.24 12.1,18.55M16.5,3C14.76,3 13.09,3.81 12,5.08C10.91,3.81 9.24,3 7.5,3C4.42,3 2,5.41 2,8.5C2,12.27 5.4,15.36 10.55,20.03L12,21.35L13.45,20.03C18.6,15.36 22,12.27 22,8.5C22,5.41 19.58,3 16.5,3Z");
-  //vimg.parse("M8,5.14V19.14L19,12.14L8,5.14Z");
- // vimg.parse("M9,5A4,4 0 0,1 13,9A4,4 0 0,1 9,13A4,4 0 0,1 5,9A4,4 0 0,1 9,5M9,15C11.67,15 17,16.34 17,19V21H1V19C1,16.34 6.33,15 9,15M16.76,5.36C18.78,7.56 18.78,10.61 16.76,12.63L15.08,10.94C15.92,9.76 15.92,8.23 15.08,7.05L16.76,5.36M20.07,2C24,6.05 23.97,12.11 20.07,16L18.44,14.37C21.21,11.19 21.21,6.65 18.44,3.63L20.07,2Z");
-  vimg.parse("M22.11 21.46L2.39 1.73L1.11 3L5.2 7.09C3.25 7.5 1.85 9.27 2 11.31C2.12 12.62 2.86 13.79 4 14.45V16C4 16.55 4.45 17 5 17H7V14.88C5.72 13.58 5 11.83 5 10C5 9.11 5.18 8.23 5.5 7.4L7.12 9C6.74 10.84 7.4 12.8 9 14V16C9 16.55 9.45 17 10 17H14C14.31 17 14.57 16.86 14.75 16.64L17 18.89V19C17 19.34 16.94 19.68 16.83 20H18C18.03 20 18.06 20 18.09 20L20.84 22.73L22.11 21.46M9.23 11.12L10.87 12.76C10.11 12.46 9.53 11.86 9.23 11.12M13 15H11V12.89L13 14.89V15M10.57 7.37L9.13 5.93C10.86 4.72 13.22 4.67 15 6C16.26 6.94 17 8.43 17 10C17 11.05 16.67 12.05 16.08 12.88L14.63 11.43C14.86 11 15 10.5 15 10C15 8.34 13.67 7 12 7C11.5 7 11 7.14 10.57 7.37M17.5 14.31C18.47 13.09 19 11.57 19 10C19 8.96 18.77 7.94 18.32 7C19.63 7.11 20.8 7.85 21.46 9C22.57 10.9 21.91 13.34 20 14.45V16C20 16.22 19.91 16.42 19.79 16.59L17.5 14.31M10 18H14V19C14 19.55 13.55 20 13 20H11C10.45 20 10 19.55 10 19V18M7 19C7 19.34 7.06 19.68 7.17 20H6C5.45 20 5 19.55 5 19V18H7V19Z");
+  goop::font_file fnt("../../../../../res/Roboto-Regular.ttf");
 
-  auto X = subsampled_shape(vimg, 20);
+  auto const load_letter = [&](auto ch) {
+    goop::rect bounds;
+    auto outline = fnt.outline(*fnt.glyph_index(ch), &bounds);
 
-  std::vector<std::uint8_t> image(96 * 96);
-  auto const h = [&](int x, int y) -> std::uint8_t&
-  {
-    return image[x + y * 96];
+    std::vector<goop::lines::line> letter;
+    for (auto const& o : outline)
+      std::visit([&](auto const& x) { goop::lines::subsample(x, 10, letter); }, o);
+    return std::pair(letter, bounds);
   };
 
-  rnu::vec2d cursor{ 0, 0 };
-  bool first = 0;
-  for (int i = 0; i < 96; ++i)
+  auto const load_svg = [](auto&& path) {
+    goop::vector_image img;
+    img.parse(path);
+    return subsampled_shape(img, 10);
+  };
+
+  auto const i0 = load_svg("M12,21.35L10.55,20.03C5.4,15.36 2,12.27 2,8.5C2,5.41 4.42,3 7.5,3C9.24,3 10.91,3.81 12,5.08C13.09,3.81 14.76,3 16.5,3C19.58,3 22,5.41 22,8.5C22,12.27 18.6,15.36 13.45,20.03L12,21.35Z");
+  auto const i1 = load_svg("M12.1,18.55L12,18.65L11.89,18.55C7.14,14.24 4,11.39 4,8.5C4,6.5 5.5,5 7.5,5C9.04,5 10.54,6 11.07,7.36H12.93C13.46,6 14.96,5 16.5,5C18.5,5 20,6.5 20,8.5C20,11.39 16.86,14.24 12.1,18.55M16.5,3C14.76,3 13.09,3.81 12,5.08C10.91,3.81 9.24,3 7.5,3C4.42,3 2,5.41 2,8.5C2,12.27 5.4,15.36 10.55,20.03L12,21.35L13.45,20.03C18.6,15.36 22,12.27 22,8.5C22,5.41 19.58,3 16.5,3Z");
+  auto const i2 = load_svg("M8,5.14V19.14L19,12.14L8,5.14Z");
+  auto const i3 = load_svg("M9,5A4,4 0 0,1 13,9A4,4 0 0,1 9,13A4,4 0 0,1 5,9A4,4 0 0,1 9,5M9,15C11.67,15 17,16.34 17,19V21H1V19C1,16.34 6.33,15 9,15M16.76,5.36C18.78,7.56 18.78,10.61 16.76,12.63L15.08,10.94C15.92,9.76 15.92,8.23 15.08,7.05L16.76,5.36M20.07,2C24,6.05 23.97,12.11 20.07,16L18.44,14.37C21.21,11.19 21.21,6.65 18.44,3.63L20.07,2Z");
+  auto const i4 = load_svg("M22.11 21.46L2.39 1.73L1.11 3L5.2 7.09C3.25 7.5 1.85 9.27 2 11.31C2.12 12.62 2.86 13.79 4 14.45V16C4 16.55 4.45 17 5 17H7V14.88C5.72 13.58 5 11.83 5 10C5 9.11 5.18 8.23 5.5 7.4L7.12 9C6.74 10.84 7.4 12.8 9 14V16C9 16.55 9.45 17 10 17H14C14.31 17 14.57 16.86 14.75 16.64L17 18.89V19C17 19.34 16.94 19.68 16.83 20H18C18.03 20 18.06 20 18.09 20L20.84 22.73L22.11 21.46M9.23 11.12L10.87 12.76C10.11 12.46 9.53 11.86 9.23 11.12M13 15H11V12.89L13 14.89V15M10.57 7.37L9.13 5.93C10.86 4.72 13.22 4.67 15 6C16.26 6.94 17 8.43 17 10C17 11.05 16.67 12.05 16.08 12.88L14.63 11.43C14.86 11 15 10.5 15 10C15 8.34 13.67 7 12 7C11.5 7 11 7.14 10.57 7.37M17.5 14.31C18.47 13.09 19 11.57 19 10C19 8.96 18.77 7.94 18.32 7C19.63 7.11 20.8 7.85 21.46 9C22.57 10.9 21.91 13.34 20 14.45V16C20 16.22 19.91 16.42 19.79 16.59L17.5 14.31M10 18H14V19C14 19.55 13.55 20 13 20H11C10.45 20 10 19.55 10 19V18M7 19C7 19.34 7.06 19.68 7.17 20H6C5.45 20 5 19.55 5 19V18H7V19Z");
+
+  auto const [lq, qbounds] = load_letter('Q');
+  auto const [lu, ubounds] = load_letter('u');
+  auto const [la, abounds] = load_letter('a');
+  auto const [lk, kbounds] = load_letter('k');
+  auto const [lqm, qmbounds] = load_letter('?');
+
   {
-    for (int j = 0; j < 96; ++j)
-    {
-      rnu::vec2d point{ i / 4.0, j / 4.0 };
+    int iw = 1024;
+    int ih = 256;
+    std::vector<std::uint8_t> img(iw * ih);
 
-      float dmin = std::numeric_limits<float>::max();
-      int intersections = 0;
+    emplace(i0, 24, 24, 1, 5, 1.f, img, iw, ih, 0, 0);
+    emplace(lq, qbounds.max.x, qbounds.max.y, 24 / fnt.units_per_em(), 5, 1.f, img, iw, ih, 24 + 10, 0);
+    emplace(lu, ubounds.max.x, ubounds.max.y, 24 / fnt.units_per_em(), 5, 1.f, img, iw, ih, 24 + 10 + 1 * (10 + 24), 0);
+    emplace(la, abounds.max.x, abounds.max.y, 24 / fnt.units_per_em(), 5, 1.f, img, iw, ih, 24 + 10 + 2 * (10 + 24), 0);
+    emplace(lk, kbounds.max.x, kbounds.max.y, 24 / fnt.units_per_em(), 5, 1.f, img, iw, ih, 24 + 10 + 3 * (10 + 24), 0);
+    emplace(lqm, qmbounds.max.x, qmbounds.max.y, 24 / fnt.units_per_em(), 5, 1.f, img, iw, ih, 24 + 10 + 4 * (10 + 24), 0);
 
-      for (auto const& line : X)
-      {
-        auto const d = minimum_distance(line.start, line.end, point) * 4.0;
-        intersections += scanline_test(line.start, line.end, point + 1e-4);
+    //emplace(i1, 24, 24, 1, 5, 1.f, img, iw, ih, 24 + 10, 0);
+    /*emplace(i2, 24, 24, 1, 5, 5.f, img, iw, ih, 48 + 20, 0);
+    emplace(i3, 24, 24, 1, 5, 5.f, img, iw, ih, 72 + 30, 0);
+    emplace(i4, 24, 24, 1, 5, 5.f, img, iw, ih, 96 + 40, 0);*/
 
-        if (abs(d) < abs(dmin))
-        {
-          dmin = d;
-        }
-      }
-      auto const signed_distance = (intersections % 2 ? -1 : 1) * dmin;
-      auto min = -5;
-      auto max = 5;
-      h(i, j) = (1-std::clamp((signed_distance - min) / (max - min), 0.f, 1.f)) * 255;
-    }
+    stbi_write_png("../../../../../result.png", iw, ih, 1, img.data(), 0);
   }
-  stbi_write_png("../../../../../result.png", 96, 96, 1, image.data(), 0);
 
   glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, true);
   goop::default_app app("Model");

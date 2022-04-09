@@ -1,6 +1,7 @@
 #pragma once
 
 #include <rnu/math/math.hpp>
+#include <variant>
 
 namespace goop::lines
 {
@@ -248,7 +249,7 @@ namespace goop::lines
   void subsample(T c, float baseline_samples, std::vector<line>& output)
   {
     c.precompute();
-    auto const num_samples = c.curvature() * baseline_samples;
+    auto const num_samples = 1 + c.curvature() * baseline_samples;
     auto const steps = std::ceil(num_samples);
     auto const step_size = 1.0 / steps;
     rnu::vec2 start = c.start;
@@ -262,4 +263,6 @@ namespace goop::lines
       start = end;
     }
   }
+
+  using line_segment = std::variant<line, curve, bezier, arc>;
 }
