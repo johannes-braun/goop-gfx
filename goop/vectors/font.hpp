@@ -1,5 +1,9 @@
 #pragma once
 
+#include "font_tag.hpp"
+#include "font_scripts.hpp"
+#include "font_languages.hpp"
+#include "font_features.hpp"
 #include <filesystem>
 #include <unordered_map>
 #include <memory>
@@ -11,13 +15,7 @@
 namespace goop
 {
   enum class glyph_id : std::uint32_t {};
-  enum class font_tag : std::uint32_t {};
   enum class glyph_class : std::uint16_t {};
-
-  consteval font_tag make_tag(char const (&arr)[5])
-  {
-    return font_tag{ std::uint32_t(arr[3] | (arr[2] << 8) | (arr[1] << 16) | (arr[0] << 24)) };
-  }
 
   class font_accessor
   {
@@ -59,9 +57,9 @@ namespace goop
     std::size_t units_per_em() const;
 
     // GPOS
-    std::optional<std::uint16_t> script_offset(font_tag tag);
-    std::optional<std::uint16_t> lang_offset(font_tag lang, std::uint16_t script);
-    std::optional<std::uint16_t> feature_offset(font_tag feat, std::uint16_t lang);
+    std::optional<std::uint16_t> script_offset(font_script script);
+    std::optional<std::uint16_t> lang_offset(font_language lang, std::uint16_t script);
+    std::optional<std::uint16_t> feature_offset(font_feature feat, std::uint16_t lang);
     feature feature_lookup(std::uint16_t feat, std::span<glyph_id const> glyphs);
 
 
@@ -166,7 +164,7 @@ namespace goop
     rnu::vec2 min;
     rnu::vec2 max;
   };
-
+    
   class font_file
   {
   public:
@@ -177,6 +175,8 @@ namespace goop
     void outline(glyph_id glyph, std::vector<lines::line_segment>& segments, rect& bounds) const;
 
     float units_per_em() const;
+
+    std::pair<float, float> advance_bearing(glyph_id current, glyph_id next = glyph_id{0});
 
   private:
     struct contour_point

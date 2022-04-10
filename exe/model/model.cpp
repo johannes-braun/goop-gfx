@@ -459,8 +459,8 @@ float signed_distance(std::vector<goop::lines::line> const& polygon, rnu::vec2 p
 
   for (auto const& line : polygon)
   {
-    auto const d = minimum_distance(line.start, line.end, point);
-    intersections += scanline_test(line.start, line.end, point);
+    auto const d = minimum_distance(line.start, line.end, point + 1e-4);
+    intersections += scanline_test(line.start, line.end, point + 1e-4);
 
     if (abs(d) < abs(dmin))
       dmin = d;
@@ -482,7 +482,7 @@ void emplace(std::vector<goop::lines::line> const& polygon, int basew, int baseh
       auto const signed_distance = ::signed_distance(polygon, { (i-padding) / scale, (j - padding) / scale }) * scale;
       auto min = -sdfw;
       auto max = sdfw;
-      at(x + i + padding, y + j + padding) = (1 - std::clamp((signed_distance - min) / (max - min), 0.f, 1.f)) * 255;
+      at(x + i + padding, y + j + padding) = std::max<float>(at(x + i + padding, y + j + padding), (1 - std::clamp((signed_distance - min) / (max - min), 0.f, 1.f)) * 255);
     }
   }
 }
@@ -497,12 +497,13 @@ int main()
   auto const load_letter = [&](auto ch) {
     goop::rect bounds;
     outline.clear();
-    fnt.outline(*fnt.glyph_index(ch), outline, bounds);
+    auto const gly = *fnt.glyph_index(ch);
+    fnt.outline(gly, outline, bounds);
 
     std::vector<goop::lines::line> letter;
     for (auto const& o : outline)
       std::visit([&](auto const& x) { goop::lines::subsample(x, 10, letter); }, o);
-    return std::pair(letter, bounds);
+    return std::tuple(gly, letter, bounds);
   };
 
   auto const load_svg = [](auto&& path) {
@@ -517,23 +518,41 @@ int main()
   auto const i3 = load_svg("M9,5A4,4 0 0,1 13,9A4,4 0 0,1 9,13A4,4 0 0,1 5,9A4,4 0 0,1 9,5M9,15C11.67,15 17,16.34 17,19V21H1V19C1,16.34 6.33,15 9,15M16.76,5.36C18.78,7.56 18.78,10.61 16.76,12.63L15.08,10.94C15.92,9.76 15.92,8.23 15.08,7.05L16.76,5.36M20.07,2C24,6.05 23.97,12.11 20.07,16L18.44,14.37C21.21,11.19 21.21,6.65 18.44,3.63L20.07,2Z");
   auto const i4 = load_svg("M22.11 21.46L2.39 1.73L1.11 3L5.2 7.09C3.25 7.5 1.85 9.27 2 11.31C2.12 12.62 2.86 13.79 4 14.45V16C4 16.55 4.45 17 5 17H7V14.88C5.72 13.58 5 11.83 5 10C5 9.11 5.18 8.23 5.5 7.4L7.12 9C6.74 10.84 7.4 12.8 9 14V16C9 16.55 9.45 17 10 17H14C14.31 17 14.57 16.86 14.75 16.64L17 18.89V19C17 19.34 16.94 19.68 16.83 20H18C18.03 20 18.06 20 18.09 20L20.84 22.73L22.11 21.46M9.23 11.12L10.87 12.76C10.11 12.46 9.53 11.86 9.23 11.12M13 15H11V12.89L13 14.89V15M10.57 7.37L9.13 5.93C10.86 4.72 13.22 4.67 15 6C16.26 6.94 17 8.43 17 10C17 11.05 16.67 12.05 16.08 12.88L14.63 11.43C14.86 11 15 10.5 15 10C15 8.34 13.67 7 12 7C11.5 7 11 7.14 10.57 7.37M17.5 14.31C18.47 13.09 19 11.57 19 10C19 8.96 18.77 7.94 18.32 7C19.63 7.11 20.8 7.85 21.46 9C22.57 10.9 21.91 13.34 20 14.45V16C20 16.22 19.91 16.42 19.79 16.59L17.5 14.31M10 18H14V19C14 19.55 13.55 20 13 20H11C10.45 20 10 19.55 10 19V18M7 19C7 19.34 7.06 19.68 7.17 20H6C5.45 20 5 19.55 5 19V18H7V19Z");
 
-  auto const [lq, qbounds] = load_letter('Q');
-  auto const [lu, ubounds] = load_letter(L'u');
-  auto const [la, abounds] = load_letter(L'ä');
-  auto const [lk, kbounds] = load_letter(L'ö');
-  auto const [lqm, qmbounds] = load_letter(L'ü');
+  auto const str = L"1+2=9";
+
+  auto const [gly1, l1, bounds1] = load_letter(str[0]);
+  auto const [gly2, l2, bounds2] = load_letter(str[1]);
+  auto const [gly3, l3, bounds3] = load_letter(str[2]);
+  auto const [gly4, l4, bounds4] = load_letter(str[3]);
+  auto const [gly5, l5, bounds5] = load_letter(str[4]);
+  
 
   {
     int iw = 1024;
-    int ih = 256;
+    int ih = 1024;
     std::vector<std::uint8_t> img(iw * ih);
 
     emplace(i0, 24, 24, 1, 5, 1.f, img, iw, ih, 0, 0);
-    emplace(lq, qbounds.max.x, qbounds.max.y, 24 / fnt.units_per_em(), 5, 1.f, img, iw, ih, 24 + 10, 0);
-    emplace(lu, ubounds.max.x, ubounds.max.y, 24 / fnt.units_per_em(), 5, 1.f, img, iw, ih, 24 + 10 + 1 * (10 + 24), 0);
-    emplace(la, abounds.max.x, abounds.max.y, 24 / fnt.units_per_em(), 5, 1.f, img, iw, ih, 24 + 10 + 2 * (10 + 24), 0);
-    emplace(lk, kbounds.max.x, kbounds.max.y, 24 / fnt.units_per_em(), 5, 1.f, img, iw, ih, 24 + 10 + 3 * (10 + 24), 0);
-    emplace(lqm, qmbounds.max.x, qmbounds.max.y, 24 / fnt.units_per_em(), 5, 1.f, img, iw, ih, 24 + 10 + 4 * (10 + 24), 0);
+
+    auto const size = 48 / fnt.units_per_em();
+    auto pos = 24 + 10;
+
+    auto const basey = 40;
+
+    auto const [ad1, be1] = fnt.advance_bearing(gly1, gly2);
+    emplace(l1, bounds1.max.x - bounds1.min.x, bounds1.max.y - bounds1.min.y, size, 10, 4.f, img, iw, ih, pos + be1 * size, basey);
+    pos += ad1 * size;
+    auto const [ad2, be2] = fnt.advance_bearing(gly2, gly3);
+    emplace(l2, bounds2.max.x - bounds2.min.x, bounds2.max.y - bounds2.min.y, size, 10, 4.f, img, iw, ih, pos + be2 * size, basey);
+    pos += ad2 * size;
+    auto const [ad3, be3] = fnt.advance_bearing(gly3, gly4);
+    emplace(l3, bounds3.max.x - bounds3.min.x, bounds3.max.y - bounds3.min.y, size, 10, 4.f, img, iw, ih, pos + be3 * size, basey);
+    pos += ad3 * size;
+    auto const [ad4, be4] = fnt.advance_bearing(gly4, gly5);
+    emplace(l4, bounds4.max.x - bounds4.min.x, bounds4.max.y - bounds4.min.y, size, 10, 4.f, img, iw, ih, pos + be4 * size, basey);
+    pos += ad4 * size;
+    auto const [ad5, be5] = fnt.advance_bearing(gly5);
+    emplace(l5, bounds5.max.x - bounds5.min.x, bounds5.max.y - bounds5.min.y, size, 10, 4.f, img, iw, ih, pos + be5 * size, basey);
 
     //emplace(i1, 24, 24, 1, 5, 1.f, img, iw, ih, 24 + 10, 0);
     /*emplace(i2, 24, 24, 1, 5, 5.f, img, iw, ih, 48 + 20, 0);

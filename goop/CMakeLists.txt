@@ -60,7 +60,7 @@ add_library (goop STATIC
   "vectors/vectors.cpp" 
   "vectors/lines.hpp"
   "vectors/font.hpp"
-  "vectors/font.cpp")
+  "vectors/font.cpp" "vectors/font_tag.hpp" "vectors/font_languages.hpp" "vectors/font_features.hpp")
 target_compile_features(goop PUBLIC cxx_std_20)
 target_link_libraries(goop PUBLIC glfw glad::glad rnu::rnu)
 target_include_directories(goop PUBLIC ${STB_INCLUDE_DIR})

@@ -180,8 +180,8 @@ namespace goop
 
   std::optional<glyph_class> font_accessor::class_of(std::size_t class_table, glyph_id glyph)
   {
-    DEBUGME();
     auto const prev = position();
+    seek_to(class_table);
     auto const format = r_u16();
     auto const glyph_cur = std::uint16_t(glyph);
 
@@ -380,7 +380,7 @@ namespace goop
     }
   }
 
-  std::optional<std::uint16_t> font_accessor::script_offset(font_tag tag)
+  std::optional<std::uint16_t> font_accessor::script_offset(font_script script)
   {
     if (!_gpos_off)
       return std::nullopt;
@@ -397,14 +397,14 @@ namespace goop
 
     for (int i = 0; i < num_scripts; ++i)
     {
-      if (r_tag() == tag)
+      if (font_script{r_u32()} == script)
         return r_u16();
       s_u16();
     }
     return std::nullopt;
   }
 
-  std::optional<std::uint16_t> font_accessor::lang_offset(font_tag lang, std::uint16_t script)
+  std::optional<std::uint16_t> font_accessor::lang_offset(font_language lang, std::uint16_t script)
   {
     if (!_gpos_off)
       return std::nullopt;
@@ -416,7 +416,7 @@ namespace goop
 
     for (int i = 0; i < count; ++i)
     {
-      if (r_tag() == lang)
+      if (font_language{ r_u32() } == lang)
         return r_u16();
       s_u16();
     }
@@ -426,7 +426,7 @@ namespace goop
     return default_offset;
   }
 
-  std::optional<std::uint16_t> font_accessor::feature_offset(font_tag feat, std::uint16_t lang)
+  std::optional<std::uint16_t> font_accessor::feature_offset(font_feature feat, std::uint16_t lang)
   {
     if (!_gpos_off)
       return std::nullopt;
@@ -444,7 +444,7 @@ namespace goop
       auto const next = position();
 
       seek_to(_gpos_off->feature_list + sizeof(std::uint16_t) + index * (4 * sizeof(std::byte) + sizeof(std::int16_t)));
-      if (feat == r_tag())
+      if (feat == font_feature{ r_u32() })
       {
         return r_u16();
       }
@@ -698,9 +698,6 @@ namespace goop
           }
           else if (fmt == 2)
           {
-            // Todo: Needs parsement of ClassDefinitionTable
-            DEBUGME();
-
             auto const class_def1_off = r_u16();
             auto const class_def2_off = r_u16();
             auto const class_def1_count = r_u16();
@@ -750,7 +747,6 @@ namespace goop
       seek_to(next);
     }
 
-    DEBUGME();
     return nullfeature;
   }
 
@@ -828,50 +824,42 @@ namespace goop
     return _accessor.index_of(character);
   }
 
+
+  std::pair<float, float> font_file::advance_bearing(glyph_id current, glyph_id next)
+  {
+    auto const hmetric = _accessor.hmetric(current);
+    auto const kerning = lookup_kerning(current, next);
+
+    if (kerning)
+      return { hmetric.advance_width + kerning.value().first.x_advance, hmetric.left_bearing };
+    return { hmetric.advance_width, hmetric.left_bearing };
+  }
+
   font_file::font_file(std::filesystem::path const& path)
     : _accessor{ path }
   {
     try_load_gpos();
-    auto const cl = lookup_kerning(*glyph_index(L'W'), *glyph_index(L'r'));
-
-    __debugbreak();
   }
   
   void font_file::try_load_gpos()
   {
-    constexpr static auto const tag = make_tag("GPOS");
-    auto const opt_index = _accessor.seek_table(make_tag("GPOS"));
+    auto script_offset = _accessor.script_offset(font_script::default_script);
 
-    if (!opt_index)
-      return;
-
-    auto const start_of_gpos = *opt_index;
-
-    auto const major = _accessor.r_u16();
-    auto const minor = _accessor.r_u16();
-    auto const off_script_list = _accessor.r_u16();
-    auto const off_feature_list = _accessor.r_u16();
-    auto const off_lookup_list = _accessor.r_u16();
-    std::uint32_t off_feature_variations = 0;
-    if (major == 1 && minor == 1)
-      off_feature_variations = _accessor.r_u32();
-
-    // read ScriptList
+    if (!script_offset)
     {
-      auto latn_offset = _accessor.script_offset(make_tag("latn"));
-      if (!latn_offset)
-        latn_offset = _accessor.script_offset(make_tag("DFLT"));
-
-      if (!latn_offset)
-        throw std::runtime_error("Neither latn nor DFLT have been found");
-
-      auto const de_offset = _accessor.lang_offset(make_tag("deDE"), *latn_offset);
-      if (!de_offset)
-        throw std::runtime_error("The lang was not found");
-
-      auto const kerning = _accessor.feature_offset(make_tag("kern"), *latn_offset + *de_offset);
-      _gpos_features.kerning = kerning;
+      throw std::runtime_error("Neither latn nor DFLT have been found");
+      return;
     }
+
+    auto const lang_offset = _accessor.lang_offset(font_language::default_language, *script_offset);
+    if (!lang_offset)
+    {
+      throw std::runtime_error("The lang was not found");
+      return;
+    }
+
+    auto const kerning = _accessor.feature_offset(font_feature::ft_kern, *script_offset + *lang_offset);
+    _gpos_features.kerning = kerning;
   }
 
   std::optional<font_accessor::pair_feature> font_file::lookup_kerning(glyph_id first, glyph_id second) const
