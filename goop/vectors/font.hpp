@@ -4,16 +4,161 @@
 #include <unordered_map>
 #include <memory>
 #include "lines.hpp"
+#include <span>
+#include <any>
 #include <fstream>
 
 namespace goop
 {
   enum class glyph_id : std::uint32_t {};
+  enum class font_tag : std::uint32_t {};
+  enum class glyph_class : std::uint16_t {};
 
-  class glyph_map_base
+  consteval font_tag make_tag(char const (&arr)[5])
+  {
+    return font_tag{ std::uint32_t(arr[3] | (arr[2] << 8) | (arr[1] << 16) | (arr[0] << 24)) };
+  }
+
+  class font_accessor
   {
   public:
-    virtual std::optional<glyph_id> glyph_index(char32_t character) const = 0;
+    struct horizontal_metric
+    {
+      std::uint16_t advance_width;
+      std::int16_t left_bearing;
+    };
+
+    struct value_record
+    {
+      std::int16_t x_placement;
+      std::int16_t y_placement;
+      std::int16_t x_advance;
+      std::int16_t y_advance;
+
+      std::int16_t x_placement_device_off;
+      std::int16_t y_placement_device_off;
+      std::int16_t x_advance_device_off;
+      std::int16_t y_advance_device_off;
+    };
+
+    using mono_feature = value_record;
+    using pair_feature = std::pair<value_record, value_record>;
+
+    using feature = std::variant<std::monostate, mono_feature, pair_feature>;
+
+    font_accessor(std::filesystem::path const& path);
+
+    std::optional<std::size_t> table_offset(font_tag tag);
+    std::optional<std::size_t> seek_table(font_tag tag);
+    void seek_to(std::size_t offset);
+    std::size_t position();
+    horizontal_metric hmetric(glyph_id glyph);
+    std::size_t glyph_offset_bytes(glyph_id glyph);
+    std::optional<glyph_id> index_of(char32_t character);
+    std::optional<glyph_class> class_of(std::size_t class_table, glyph_id glyph);
+    std::size_t units_per_em() const;
+
+    // GPOS
+    std::optional<std::uint16_t> script_offset(font_tag tag);
+    std::optional<std::uint16_t> lang_offset(font_tag lang, std::uint16_t script);
+    std::optional<std::uint16_t> feature_offset(font_tag feat, std::uint16_t lang);
+    feature feature_lookup(std::uint16_t feat, std::span<glyph_id const> glyphs);
+
+
+    // read funcs
+    std::uint8_t r_u8();
+    std::uint16_t r_u16();
+    std::uint32_t r_u32();
+    std::uint64_t r_u64();
+    font_tag r_tag();
+
+    // skip funcs
+    void s_u8();
+    void s_u16();
+    void s_u32();
+    void s_u64();
+    void skip(std::size_t bytes);
+
+  private:
+    std::optional<std::size_t> coverage_index(std::size_t offset, glyph_id glyph);
+    value_record r_value(std::uint16_t flags);
+
+    static constexpr size_t table_size = 16;
+    static constexpr size_t ttf_magic_number = 0x5F0F3CF5;
+
+    enum class loc_format : uint16_t
+    {
+      short_int16 = 0,
+      long_int32 = 1
+    };
+
+    struct glyph_index_data_f0 {
+      size_t offset;
+    };
+    struct glyph_index_data_f4 
+    { 
+      size_t offset;
+      std::uint16_t seg_count_x2;
+      std::uint16_t search_range;
+      std::uint16_t entry_selector;
+      std::uint16_t range_shift;
+    };
+    using glyph_index_data = std::variant<glyph_index_data_f0, glyph_index_data_f4>;
+
+    struct offset_subtable
+    {
+      uint32_t scaler;
+      uint16_t num_tables;
+      uint16_t search_range;
+      uint16_t entry_selector;
+      uint16_t range_shift;
+    } _offsets;
+
+    struct header
+    {
+      std::uint32_t checksum_adjustment;
+      std::uint16_t flags;
+      std::uint16_t units_per_em;
+      std::int16_t x_min;
+      std::int16_t y_min;
+      std::int16_t x_max;
+      std::int16_t y_max;
+      std::uint16_t lowest_recommended_ppem;
+      std::int16_t font_direction_hint;
+      loc_format index_to_loc_format;
+      std::int16_t glyph_data_format;
+    } _header;
+
+    struct hhea
+    {
+      std::int16_t ascent;
+      std::int16_t descent;
+      std::int16_t line_gap;
+      std::uint16_t advance_width_max;
+      std::int16_t min_left_side_bearing;
+      std::int16_t min_right_side_bearing;
+      std::int16_t x_max_extent;
+      std::int16_t caret_slope_rise;
+      std::int16_t caret_slope_run;
+      std::int16_t caret_offset;
+      std::int16_t metric_data_format;
+      std::int16_t num_long_horizontal_metrics;
+    } _hhea;
+
+    glyph_index_data _glyph_indexer;
+
+    struct gpos_off
+    {
+      std::size_t script_list = 0;
+      std::size_t feature_list = 0;
+      std::size_t lookup_list = 0;
+      std::size_t feature_variations = 0;
+    };
+
+    std::optional<gpos_off>  _gpos_off;
+    std::size_t _hmtx_offset;
+    std::uint16_t _num_glyphs;
+    std::ifstream _file;
   };
 
   struct rect
@@ -29,68 +174,26 @@ namespace goop
 
     std::optional<glyph_id> glyph_index(char32_t character) const;
 
-    std::vector<lines::line_segment> outline(glyph_id glyph, rect* bounds = nullptr) const;
+    void outline(glyph_id glyph, std::vector<lines::line_segment>& segments, rect& bounds) const;
 
     float units_per_em() const;
 
   private:
-    std::size_t glyph_offset_bytes(glyph_id glyph) const;
-
-    struct table
+    struct contour_point
     {
-      std::uint32_t tag;
-      std::uint32_t check_sum;
-      std::uint32_t offset;
-      std::uint32_t length;
+      std::uint8_t flags;
+      bool on_line;
+      rnu::vec2 pos;
     };
+    void outline_impl(glyph_id glyph, std::vector<font_file::contour_point>& contours, std::vector<std::uint16_t>& end_points, rect* bounds) const;
+    void try_load_gpos();
+    std::optional<font_accessor::pair_feature> lookup_kerning(glyph_id first, glyph_id second) const;
 
-    struct header
+    struct gpos_features
     {
-      std::uint16_t version_major;
-      std::uint16_t version_minor;
-      std::uint16_t revision_major;
-      std::uint16_t revision_minor;
-      std::uint32_t checksum_adjustment;
-      std::uint32_t magic_number;
-      std::uint16_t flags;
-      std::uint16_t units_per_em;
-      std::int64_t created;
-      std::int64_t modified;
-      std::int16_t x_min;
-      std::int16_t y_min;
-      std::int16_t x_max;
-      std::int16_t y_max;
-      std::uint16_t mac_style;
-      std::uint16_t lowest_recommended_ppem;
-      std::int16_t font_direction_hint;
-      std::int16_t index_to_loc_format;
-      std::int16_t glyph_data_format;
-    };
+      std::optional<std::uint16_t> kerning;
+    } _gpos_features;
 
-    struct maxp
-    {
-      std::uint16_t version_major;
-      std::uint16_t version_minor;
-      std::uint16_t num_glyphs;
-      std::uint16_t max_points;
-      std::uint16_t max_contours;
-      std::uint16_t max_component_points;
-      std::uint16_t max_component_contours;
-      std::uint16_t max_zones;
-      std::uint16_t max_twilight_points;
-      std::uint16_t max_storage;
-      std::uint16_t max_function_defs;
-      std::uint16_t max_stack_elements;
-      std::uint16_t max_size_of_instructions;
-      std::uint16_t max_component_elements;
-      std::uint16_t max_component_depth;
-    };
-
-    mutable std::ifstream _file;
-    header _header;
-    maxp _maxp;
-    std::unordered_map<std::uint32_t, table> _tables;
-    std::unique_ptr<glyph_map_base> _glyph_map;
-    std::vector<std::uint32_t> _glyph_offsets;
+    mutable font_accessor _accessor;
   };
 }
