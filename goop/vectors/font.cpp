@@ -2,6 +2,7 @@
 #include <span>
 #include <ranges>
 #include <array>
+#include <iostream>
 
 namespace goop
 {
@@ -35,17 +36,31 @@ namespace goop
     return (std::uint64_t(read_u32(stream)) << 32) | read_u32(stream);
   }
 
-  font_accessor::font_accessor(std::filesystem::path const& path)
-    : _file{ path, std::ios::binary }
+  std::optional<font_accessor::gspec_off> const& font_accessor::gpos() const
   {
-    // read offset subtable
-    _offsets.scaler = read_u32(_file);
-    _offsets.num_tables = read_u16(_file);
-    _offsets.search_range = read_u16(_file);
-    _offsets.entry_selector = read_u16(_file);
-    _offsets.range_shift = read_u16(_file);
+    return _gpos_off;
+  }
 
-    seek_table(make_tag("hhea"));
+  std::optional<font_accessor::gspec_off> const& font_accessor::gsub() const
+  {
+    return _gsub_off;
+  }
+
+  font_accessor::font_accessor(std::filesystem::path const& path)
+    : _file(path, std::ios::binary)
+  {
+    _file.seekg(0, std::ios::end);
+    _file_size = _file.tellg();
+    _file.seekg(0);
+
+    // read offset subtable
+    _offsets.scaler = r_u32();
+    _offsets.num_tables = r_u16();
+    _offsets.search_range = r_u16();
+    _offsets.entry_selector = r_u16();
+    _offsets.range_shift = r_u16();
+
+    seek_table(font_tag::table_hhea);
     s_u32(); // version
     _hhea.ascent = r_u16();
     _hhea.descent = r_u16();
@@ -62,13 +77,13 @@ namespace goop
     _hhea.metric_data_format = r_u16();
     _hhea.num_long_horizontal_metrics = r_u16();
 
-    _hmtx_offset = *table_offset(make_tag("hmtx"));
+    _hmtx_offset = *table_offset(font_tag::table_hmtx);
 
-    seek_table(make_tag("maxp"));
+    seek_table(font_tag::table_maxp);
     s_u32(); // version
     _num_glyphs = r_u16();
 
-    seek_table(make_tag("head"));
+    seek_table(font_tag::table_head);
     s_u32(); // version
     s_u32(); // revision
     _header.checksum_adjustment = r_u32();
@@ -90,7 +105,7 @@ namespace goop
     _header.index_to_loc_format = loc_format{ r_u16() };
     _header.glyph_data_format = r_u16();
 
-    auto const offset = seek_table(make_tag("cmap"));
+    auto const offset = seek_table(font_tag::table_cmap);
     std::uint16_t version = r_u16();
     std::uint16_t num_subtables = r_u16();
 
@@ -131,9 +146,9 @@ namespace goop
     }
 
     // GPOS
-    if (auto const gpos_base = seek_table(make_tag("GPOS")))
+    if (auto const gpos_base = seek_table(font_tag::table_gpos))
     {
-      _gpos_off = gpos_off{};
+      _gpos_off = gspec_off{};
 
       auto const major = r_u16();
       auto const minor = r_u16();
@@ -143,6 +158,21 @@ namespace goop
       _gpos_off->lookup_list = gpos_base.value() + r_u16();
       if (major == 1 && minor == 1)
         _gpos_off->feature_variations = gpos_base.value() + r_u32();
+    }
+
+    // GSUB
+    if (auto const gsub_base = seek_table(font_tag::table_gsub))
+    {
+      _gsub_off = gspec_off{};
+
+      auto const major = r_u16();
+      auto const minor = r_u16();
+
+      _gsub_off->script_list = gsub_base.value() + r_u16();
+      _gsub_off->feature_list = gsub_base.value() + r_u16();
+      _gsub_off->lookup_list = gsub_base.value() + r_u16();
+      if (major == 1 && minor == 1)
+        _gsub_off->feature_variations = gsub_base.value() + r_u32();
     }
   }
 
@@ -197,7 +227,7 @@ namespace goop
       seek_to(position() + index * sizeof(std::uint16_t));
       auto const class_val = r_u16();
       seek_to(prev);
-      return glyph_class{ class_val }; 
+      return glyph_class{ class_val };
     }
     else if (format == 2)
     {
@@ -209,10 +239,10 @@ namespace goop
         return glyph_id(r_u16());
       };
 
-      auto const bound = std::ranges::upper_bound(std::ranges::views::iota(0, int(num_ranges)), glyph, &glyph_id_less, map);
+      auto const bound = std::ranges::lower_bound(std::ranges::views::iota(0, int(num_ranges)), glyph, &glyph_id_less, map);
       auto const found_index = *bound;
 
-      seek_to(base_offset + found_index * 3 * sizeof(std::uint16_t) );
+      seek_to(base_offset + found_index * 3 * sizeof(std::uint16_t));
       auto const lower = r_u16();
       auto const upper = r_u16();
       auto const class_val = r_u16();
@@ -241,37 +271,17 @@ namespace goop
     {
       auto const base_offset = f4->offset + 3 * sizeof(std::uint16_t);
       auto const end_points_offset = base_offset + 4 * sizeof(std::uint16_t);
-      auto const end_point = [&](size_t offset) {
-        seek_to(end_points_offset + offset);
-        return r_u16();
+  
+      auto const map = [&](int k) -> char32_t {
+        seek_to(end_points_offset + k *sizeof(std::uint16_t));
+        return char32_t(r_u16());
       };
 
-      auto begin = 0;
-      auto center = f4->search_range >> 1;
-      auto end = f4->search_range;
+      auto const bound = std::ranges::lower_bound(std::ranges::views::iota(0, int(f4->seg_count_x2 / 2)), character, std::less<char32_t>{}, map);
+      auto const found_index = *bound;
 
-      // binary search
-      for (int i = 1; i < f4->entry_selector; ++i)
-      {
-        if (character < end_point(center))
-        {
-          end = center;
-          center -= (f4->search_range >> (1 + i));
-        }
-        else
-        {
-          begin = center;
-          center += (f4->search_range >> (1 + i));
-        }
-      }
-
-      if (character > end_point(center))
-      {
-        center = end;
-      }
-
-      auto const bound_upper = end_point(center);
-      auto const u16_offset_bytes = center;
+      auto const bound_upper = map(found_index);
+      auto const u16_offset_bytes = sizeof(std::uint16_t) * found_index;
       auto const sized_seg_count = sizeof(std::uint16_t) * (f4->seg_count_x2 / 2);
       auto const start_codes_offset = end_points_offset + sizeof(std::uint16_t) * (f4->seg_count_x2 / 2 + 1);
       seek_to(start_codes_offset + u16_offset_bytes);
@@ -300,92 +310,57 @@ namespace goop
 
   std::optional<std::size_t> font_accessor::table_offset(font_tag tag)
   {
+    if (!_file.good())__debugbreak();
     seek_to(sizeof(offset_subtable));
-    auto const table_id = [&](size_t offset) {
-      seek_to(sizeof(offset_subtable) + offset);
-      return r_tag();
-    };
-    auto const less = [&](font_tag t) {
+    auto const tag_less = [](font_tag tag, font_tag t) {
       return std::uint32_t(tag) < std::uint32_t(t);
     };
-    auto const greater = [&](font_tag t) {
-      return std::uint32_t(tag) > std::uint32_t(t);
+    auto const map = [&](int k) {
+      seek_to(sizeof(offset_subtable) + k * (4 * sizeof(std::uint32_t)));
+      auto const ui = r_u32();
+      char chs[4];
+      memcpy(chs, &ui, 4);
+      return font_tag(ui);
     };
 
-    if (less(table_id(_offsets.range_shift)))
+    auto const bound = std::ranges::lower_bound(std::ranges::views::iota(0, int(_offsets.num_tables)), tag, tag_less, map);
+
+    if (tag == map(*bound))
     {
-      // search shift linearly
-      for (int i = 0; i < _offsets.range_shift; i += table_size)
-      {
-        if (tag == table_id(i))
-        {
-          s_u32(); // checksum
-          return r_u32(); // offset
-        }
-      }
-    }
-    else
-    {
-      auto begin = 0;
-      auto center = _offsets.search_range >> 1;
-      auto end = _offsets.search_range;
-
-      // binary search
-      for (int i = 1; i < _offsets.entry_selector; ++i)
-      {
-        if (less(table_id(center)))
-        {
-          end = center;
-          center -= (_offsets.search_range >> (1 + i));
-        }
-        else
-        {
-          begin = center;
-          center += (_offsets.search_range >> (1 + i));
-        }
-      }
-
-      if (greater(table_id(center)))
-      {
-        center = end;
-      }
-      else if (less(table_id(center)))
-      {
-        center = begin;
-      }
-
-      if (tag == table_id(center))
-      {
-        s_u32(); // checksum
-        return r_u32(); // offset
-      }
-      return std::nullopt;
+      s_u32(); // checksum
+      return r_u32(); // offset
     }
 
     return std::nullopt;
   }
 
-  std::size_t font_accessor::glyph_offset_bytes(glyph_id glyph)
+  font_accessor::offset_size font_accessor::glyph_offset_size_bytes(glyph_id glyph)
   {
     auto const glyph_num = std::uint32_t(glyph);
     if (_header.index_to_loc_format == loc_format::short_int16)
     {
-      seek_to(*table_offset(make_tag("loca")) + glyph_num * sizeof(std::uint16_t));
-      return std::size_t{ r_u16() } *2;
+      seek_to(*table_offset(font_tag::table_loca) + glyph_num * sizeof(std::uint16_t));
+      offset_size result;
+      result.offset = std::ptrdiff_t(r_u16()) * 2;
+      result.size = std::ptrdiff_t(r_u16()) * 2 - result.offset;
+      return result;
     }
     else
     {
-      seek_to(*table_offset(make_tag("loca")) + glyph_num * sizeof(std::uint32_t));
-      return r_u32();
+      seek_to(*table_offset(font_tag::table_loca) + glyph_num * sizeof(std::uint32_t));
+      offset_size result;
+      result.offset = std::ptrdiff_t(r_u32());
+      result.size = std::ptrdiff_t(r_u32()) - result.offset;
+      return result;
     }
   }
 
-  std::optional<std::uint16_t> font_accessor::script_offset(font_script script)
+  std::optional<std::uint16_t> font_accessor::script_offset(font_script script, std::optional<gspec_off> const& offset)
   {
-    if (!_gpos_off)
+    if (!offset)
       return std::nullopt;
 
-    seek_to(_gpos_off->script_list);
+    seek_to(offset->script_list);
 
     std::uint16_t num_scripts = r_u16();
 
@@ -397,19 +372,19 @@ namespace goop
 
     for (int i = 0; i < num_scripts; ++i)
     {
-      if (font_script{r_u32()} == script)
+      if (font_script{ r_u32() } == script)
         return r_u16();
       s_u16();
     }
     return std::nullopt;
   }
 
-  std::optional<std::uint16_t> font_accessor::lang_offset(font_language lang, std::uint16_t script)
+  std::optional<std::uint16_t> font_accessor::lang_offset(font_language lang, std::uint16_t script, std::optional<gspec_off> const& offset)
   {
-    if (!_gpos_off)
+    if (!offset)
       return std::nullopt;
 
-    seek_to(_gpos_off->script_list + script);
+    seek_to(offset->script_list + script);
 
     auto const default_offset = r_u16();
     auto const count = r_u16();
@@ -426,12 +401,12 @@ namespace goop
     return default_offset;
   }
 
-  std::optional<std::uint16_t> font_accessor::feature_offset(font_feature feat, std::uint16_t lang)
+  std::optional<std::uint16_t> font_accessor::feature_offset(font_feature feat, std::uint16_t lang, std::optional<gspec_off> const& offset)
   {
-    if (!_gpos_off)
+    if (!offset)
       return std::nullopt;
 
-    seek_to(_gpos_off->script_list + lang);
+    seek_to(offset->script_list + lang);
 
     // search in featureIndices for feature with the given tag
     s_u16(); // lookupOrderOffset
@@ -443,8 +418,9 @@ namespace goop
       auto const index = r_u16();
       auto const next = position();
 
-      seek_to(_gpos_off->feature_list + sizeof(std::uint16_t) + index * (4 * sizeof(std::byte) + sizeof(std::int16_t)));
-      if (feat == font_feature{ r_u32() })
+      seek_to(offset->feature_list + sizeof(std::uint16_t) + index * (4 * sizeof(std::byte) + sizeof(std::int16_t)));
+      auto const rd = font_feature{ r_u32() };
+      if (feat == rd)
       {
         return r_u16();
       }
@@ -475,8 +451,6 @@ namespace goop
       auto const g = map(found_index);
 
       seek_to(prev);
-
-      DEBUGME();
 
       if (g == glyph)
         return found_index;
@@ -562,192 +536,286 @@ namespace goop
     return rec;
   }
 
-  font_accessor::feature font_accessor::feature_lookup(std::uint16_t feat, std::span<glyph_id const> glyphs)
+  template<typename Fun>
+  auto lookup(
+    font_accessor& accessor, std::uint16_t feat, std::span<glyph_id const> glyphs, std::optional<font_accessor::gspec_off> const& offset, Fun&& func)
+    -> std::invoke_result_t<Fun, font_accessor::lookup_query>
   {
-    constexpr static std::monostate nullfeature{};
+    if (!offset)
+      return std::nullopt;
 
-    if (!_gpos_off)
-      return nullfeature;
-
-    seek_to(_gpos_off->feature_list + feat);
-    s_u16(); // feature params offset
-    auto const count = r_u16();
+    accessor.seek_to(offset->feature_list + feat);
+    accessor.s_u16(); // feature params offset
+    auto const count = accessor.r_u16();
 
     for (int i = 0; i < count; ++i)
     {
-      auto const index = r_u16();
-      auto const next = position();
+      auto const index = accessor.r_u16();
+      auto const next = accessor.position();
 
-      seek_to(_gpos_off->lookup_list + sizeof(std::uint16_t) + index * sizeof(std::int16_t));
-      auto const lookup_offset = r_u16();
-      seek_to(_gpos_off->lookup_list + lookup_offset);
+      accessor.seek_to(offset->lookup_list + sizeof(std::uint16_t) + index * sizeof(std::int16_t));
+      auto const lookup_offset = accessor.r_u16();
+      accessor.seek_to(offset->lookup_list + lookup_offset);
 
-      enum class lookup_type_t
-      {
-        single_adj = 1,
-        pair_adj = 2,
-        cursive_attachment_pos = 3,
-        mark_to_base_attachment_pos = 4,
-        mark_to_ligature_attachment_pos = 5,
-        mark_to_mark_attachment_pos = 6,
-        contextual_pos = 7,
-        chained_contexts_pos = 8,
-        extension_pos = 9,
-      };
-
-      auto const lookup_type = lookup_type_t{ r_u16() };
-      auto const lookup_flag = r_u16();
-      auto const num_subtables = r_u16();
+      auto const lookup_type = accessor.r_u16();
+      auto const lookup_flag = accessor.r_u16();
+      auto const num_subtables = accessor.r_u16();
+      font_accessor::lookup_query query;
+      query.flags = lookup_flag;
+      query.type = lookup_type;
 
       for (int sub = 0; sub < num_subtables; ++sub)
       {
-        auto const subtable_offset = r_u16();
-        auto const next_subtable_offset = position();
+        auto const subtable_offset = accessor.r_u16();
+        auto const next_subtable_offset = accessor.position();
 
-        seek_to(_gpos_off->lookup_list + lookup_offset + subtable_offset);
+        accessor.seek_to(offset->lookup_list + lookup_offset + subtable_offset);
+        query.lookup_offset = lookup_offset;
+        query.subtable_offset = subtable_offset;
 
-        switch (lookup_type)
+        if (auto const res = std::invoke(func, query))
+          return res;
+
+        accessor.seek_to(next_subtable_offset);
+      }
+
+      accessor.seek_to(next);
+    }
+
+    return std::nullopt;
+  }
+
+  std::optional<font_accessor::gsub_feature> font_accessor::gsub_feature_lookup(std::uint16_t feat, std::span<glyph_id const> glyphs)
+  {
+    enum class lookup_type_t
+    {
+      single_sub = 1,
+      multi_sub = 2,
+      alternate = 3,
+      ligature = 4,
+      context = 5,
+      chaining_context = 6,
+      extrension_sub = 7,
+      reverse_chaining_context_single = 8
+    };
+
+    return lookup(*this, feat, glyphs, _gsub_off, [&](lookup_query const& q) -> std::optional<gsub_feature> {
+      lookup_type_t const type = lookup_type_t(q.type);
+      switch (type)
+      {
+      case lookup_type_t::single_sub:
+      case lookup_type_t::multi_sub:
+      case lookup_type_t::alternate:
+      case lookup_type_t::ligature:
+      {
+        auto const format = r_u16();
+        auto const coverage_offset = r_u16();
+        auto const covered = coverage_index(_gsub_off->lookup_list + q.lookup_offset + q.subtable_offset + coverage_offset, glyphs[0]);
+
+        if (!covered)
+          break;
+
+        auto const lig_set_count = r_u16();
+        seek_to(position() + *covered * sizeof(std::uint16_t));
+        auto const lig_set_offset = r_u16();
+
+        seek_to(_gsub_off->lookup_list + q.lookup_offset + q.subtable_offset + lig_set_offset);
+        auto const lig_count = r_u16();
+        auto const base_offset = _gsub_off->lookup_list + q.lookup_offset + q.subtable_offset + lig_set_offset;
+
+        for (int i = 0; i < lig_count; ++i)
         {
-        case lookup_type_t::single_adj:
-        {
-          if (glyphs.size() != 1)
+          seek_to(base_offset + sizeof(std::uint16_t) + i * sizeof(std::uint16_t));
+          auto const offset = r_u16();
+          seek_to(base_offset + offset);
+
+          mono_substitution_feature feat{ .substitution = glyph_id(r_u16()) };
+
+          bool matches = true;
+          auto const num_comps = r_u16();
+          if (num_comps != glyphs.size())
+            continue;
+
+          for (int c = 1; c < num_comps; ++c)
           {
-            // we did not ask for a one-glyph-thing...
-            break;
-          }
-
-          auto const fmt = r_u16();
-          auto const coverage_offset = r_u16();
-          auto const glyph = std::uint32_t(glyphs[0]);
-
-          auto covered = coverage_index(_gpos_off->lookup_list + lookup_offset + subtable_offset + coverage_offset, glyphs[0]);
-
-          DEBUGME();
-          if (covered)
-          {
-            auto const value_format = r_u16();
-
-            if (fmt == 1)
+            bool const glyph_ok = glyph_id(r_u16()) == glyphs[c];
+            if (!glyph_ok)
             {
-              // All have the same value format
-              return r_value(value_format);
-            }
-            else
-            {
-              // We have one item per covered glyph
-              auto const rec_size = value_record_size(value_format);
-              s_u16(); // value_count
-              seek_to(position() + rec_size * *covered);
-              return r_value(value_format);
+              matches = false;
+              break;
             }
           }
-          // Otherwise try next subtable
+
+          if (matches)
+            return feat;
         }
+      }
+      break;
+      case lookup_type_t::context:
+      case lookup_type_t::chaining_context:
+      case lookup_type_t::extrension_sub:
+      case lookup_type_t::reverse_chaining_context_single:
+      default:
+        throw std::runtime_error("Not implemented");
         break;
-        case lookup_type_t::pair_adj:
+      }
+      return std::nullopt;
+      });
+  }
+
+  std::optional<font_accessor::gpos_feature> font_accessor::gpos_feature_lookup(std::uint16_t feat, std::span<glyph_id const> glyphs)
+  {
+    enum class lookup_type_t
+    {
+      single_adj = 1,
+      pair_adj = 2,
+      cursive_attachment_pos = 3,
+      mark_to_base_attachment_pos = 4,
+      mark_to_ligature_attachment_pos = 5,
+      mark_to_mark_attachment_pos = 6,
+      contextual_pos = 7,
+      chained_contexts_pos = 8,
+      extension_pos = 9,
+    };
+
+    return lookup(*this, feat, glyphs, _gpos_off, [&](lookup_query const& q) -> std::optional<gpos_feature> {
+      auto const lookup_type = lookup_type_t{ q.type };
+      switch (lookup_type)
+      {
+      case lookup_type_t::single_adj:
+      {
+        if (glyphs.size() != 1)
         {
-          if (glyphs.size() != 2)
-          {
-            // we did not ask for a two-glyph-thing...
-            break;
-          }
-
-          auto const base_off = position();
-          auto const fmt = r_u16();
-          std::int16_t const coverage_offset = r_u16();
-
-          auto covered = coverage_index(_gpos_off->lookup_list + lookup_offset + subtable_offset + coverage_offset, glyphs[0]);
-
-          if (!covered)
-            break; // break out of switch (not of loop)
-
-          auto const value_format_1 = r_u16();
-          auto const value_format_2 = r_u16();
-          auto const record_size_1 = value_record_size(value_format_1);
-          auto const record_size_2 = value_record_size(value_format_2);
-
-          if (fmt == 1)
-          {
-            auto const num_pair_sets = r_u16();
-            seek_to(position() + covered.value() * sizeof(std::uint16_t));
-            auto const pair_set_offset = r_u16();
-            seek_to(_gpos_off->lookup_list + lookup_offset + subtable_offset + pair_set_offset);
-            auto const pair_value_count = r_u16();
-            auto const base_offset = position();
-
-            auto const pair_value_size = sizeof(std::uint16_t) +
-              record_size_1 + record_size_2;
-
-            auto const map = [&](int k) {
-              seek_to(base_offset + k * pair_value_size);
-              return glyph_id(r_u16());
-            };
-
-            auto const bound = std::ranges::lower_bound(std::ranges::views::iota(0, int(pair_value_count)), glyphs[1], &glyph_id_less, map);
-            auto const found_index = *bound;
-            auto const mp = map(found_index-1);
-            seek_to(base_offset + found_index * pair_value_size);
-            auto const other_glyph = r_u16(); // glyph
-            if (std::uint32_t(other_glyph) != std::uint32_t(glyphs[1]))
-              break; // not covered
-
-            auto const value_1 = r_value(value_format_1);
-            auto const value_2 = r_value(value_format_2);
-
-            return pair_feature(value_1, value_2);
-          }
-          else if (fmt == 2)
-          {
-            auto const class_def1_off = r_u16();
-            auto const class_def2_off = r_u16();
-            auto const class_def1_count = r_u16();
-            auto const class_def2_count = r_u16();
-            auto const base_of_class1_recs = position();
-
-            auto const class1 = class_of(_gpos_off->lookup_list + lookup_offset + subtable_offset + class_def1_off, glyphs[0]);
-            auto const class2 = class_of(_gpos_off->lookup_list + lookup_offset + subtable_offset + class_def2_off, glyphs[1]);
-
-            if (!class1 || !class2)
-              break; // not all are classed.
-
-            auto const class1_int = std::uint16_t(class1.value());
-            auto const class2_int = std::uint16_t(class2.value());
-
-            auto const class2_rec_size = record_size_1 + record_size_2;
-            auto const record = class_def2_count * class2_rec_size * class1_int + class2_rec_size * class2_int;
-
-            seek_to(_gpos_off->lookup_list + lookup_offset + subtable_offset + base_of_class1_recs + record);
-
-            auto const value_1 = r_value(value_format_1);
-            auto const value_2 = r_value(value_format_2);
-            return pair_feature(value_1, value_2);
-          }
-          else
-          {
-            throw std::runtime_error("Invalid PairPosFormat");
-          }
-          // Otherwise try next subtable
-        }
-        break;
-        case lookup_type_t::cursive_attachment_pos:
-        case lookup_type_t::mark_to_base_attachment_pos:
-        case lookup_type_t::mark_to_ligature_attachment_pos:
-        case lookup_type_t::mark_to_mark_attachment_pos:
-        case lookup_type_t::contextual_pos:
-        case lookup_type_t::chained_contexts_pos:
-        case lookup_type_t::extension_pos:
-        default:
-          throw std::runtime_error("Not implemented");
+          // we did not ask for a one-glyph-thing...
           break;
         }
 
-        seek_to(next_subtable_offset);
+        auto const fmt = r_u16();
+        auto const coverage_offset = r_u16();
+        auto const glyph = std::uint32_t(glyphs[0]);
+
+        auto covered = coverage_index(_gpos_off->lookup_list + q.lookup_offset + q.subtable_offset + coverage_offset, glyphs[0]);
+
+        DEBUGME();
+        if (covered)
+        {
+          auto const value_format = r_u16();
+
+          if (fmt == 1)
+          {
+            // All have the same value format
+            return r_value(value_format);
+          }
+          else
+          {
+            // We have one item per covered glyph
+            auto const rec_size = value_record_size(value_format);
+            s_u16(); // value_count
+            seek_to(position() + rec_size * *covered);
+            return r_value(value_format);
+          }
+        }
+        // Otherwise try next subtable
       }
+      break;
+      case lookup_type_t::pair_adj:
+      {
+        if (glyphs.size() != 2)
+        {
+          // we did not ask for a two-glyph-thing...
+          break;
+        }
 
-      seek_to(next);
-    }
+        auto const base_off = position();
+        auto const fmt = r_u16();
+        std::int16_t const coverage_offset = r_u16();
 
-    return nullfeature;
+        auto covered = coverage_index(_gpos_off->lookup_list + q.lookup_offset + q.subtable_offset + coverage_offset, glyphs[0]);
+
+        if (!covered)
+          break; // break out of switch (not of loop)
+
+        auto const value_format_1 = r_u16();
+        auto const value_format_2 = r_u16();
+        auto const record_size_1 = value_record_size(value_format_1);
+        auto const record_size_2 = value_record_size(value_format_2);
+
+        if (fmt == 1)
+        {
+          auto const num_pair_sets = r_u16();
+          seek_to(position() + covered.value() * sizeof(std::uint16_t));
+          auto const pair_set_offset = r_u16();
+          seek_to(_gpos_off->lookup_list + q.lookup_offset + q.subtable_offset + pair_set_offset);
+          auto const pair_value_count = r_u16();
+          auto const base_offset = position();
+
+          auto const pair_value_size = sizeof(std::uint16_t) +
+            record_size_1 + record_size_2;
+
+          auto const map = [&](int k) {
+            seek_to(base_offset + k * pair_value_size);
+            return glyph_id(r_u16());
+          };
+
+          auto const bound = std::ranges::lower_bound(std::ranges::views::iota(0, int(pair_value_count)), glyphs[1], &glyph_id_less, map);
+          auto const found_index = *bound;
+          auto const mp = map(found_index - 1);
+          seek_to(base_offset + found_index * pair_value_size);
+          auto const other_glyph = r_u16(); // glyph
+          if (std::uint32_t(other_glyph) != std::uint32_t(glyphs[1]))
+            break; // not covered
+
+          auto const value_1 = r_value(value_format_1);
+          auto const value_2 = r_value(value_format_2);
+
+          return pair_value_feature(value_1, value_2);
+        }
+        else if (fmt == 2)
+        {
+          auto const class_def1_off = r_u16();
+          auto const class_def2_off = r_u16();
+          auto const class_def1_count = r_u16();
+          auto const class_def2_count = r_u16();
+          auto const base_of_class1_recs = position();
+
+          auto const class1 = class_of(_gpos_off->lookup_list + q.lookup_offset + q.subtable_offset + class_def1_off, glyphs[0]);
+          auto const class2 = class_of(_gpos_off->lookup_list + q.lookup_offset + q.subtable_offset + class_def2_off, glyphs[1]);
+
+          if (!class1 || !class2)
+            break; // not all are classed.
+
+          auto const class1_int = std::uint16_t(class1.value());
+          auto const class2_int = std::uint16_t(class2.value());
+
+          auto const class2_rec_size = record_size_1 + record_size_2;
+          auto const record = class_def2_count * class2_rec_size * class1_int + class2_rec_size * class2_int;
+
+          seek_to(base_of_class1_recs + record);
+
+          auto const value_1 = r_value(value_format_1);
+          auto const value_2 = r_value(value_format_2);
+          return pair_value_feature(value_1, value_2);
+        }
+        else
+        {
+          throw std::runtime_error("Invalid PairPosFormat");
+        }
+        // Otherwise try next subtable
+      }
+      break;
+      case lookup_type_t::cursive_attachment_pos:
+      case lookup_type_t::mark_to_base_attachment_pos:
+      case lookup_type_t::mark_to_ligature_attachment_pos:
+      case lookup_type_t::mark_to_mark_attachment_pos:
+      case lookup_type_t::contextual_pos:
+      case lookup_type_t::chained_contexts_pos:
+      case lookup_type_t::extension_pos:
+      default:
+        throw std::runtime_error("Not implemented");
+        break;
+      }
+      return std::nullopt;
+      });
   }
 
   std::optional<std::size_t> font_accessor::seek_table(font_tag tag)
@@ -759,6 +827,9 @@ namespace goop
 
   void font_accessor::seek_to(std::size_t offset)
   {
+    if (offset >= _file_size)
+      throw std::invalid_argument("Offset out of range");
+
     _file.seekg(offset);
   }
 
@@ -825,52 +896,96 @@ namespace goop
   }
 
 
-  std::pair<float, float> font_file::advance_bearing(glyph_id current, glyph_id next)
+  std::pair<float, float> font_file::advance_bearing(glyph_id current, glyph_id next) const
   {
-    auto const hmetric = _accessor.hmetric(current);
+    if (!_accessor.good())__debugbreak();
+    auto hmetric = _accessor.hmetric(current);
     auto const kerning = lookup_kerning(current, next);
 
-    if (kerning)
-      return { hmetric.advance_width + kerning.value().first.x_advance, hmetric.left_bearing };
-    return { hmetric.advance_width, hmetric.left_bearing };
+    auto const rec = get_rect(current);
+    if (hmetric.advance_width == 0)
+    {
+      hmetric.advance_width = rec.max.x - rec.min.x;
+      hmetric.left_bearing = rec.min.x;
+    }
+    auto const bearing = hmetric.left_bearing - rec.min.x + (kerning ? kerning.value().first.x_placement : 0);
+    auto const advance = hmetric.advance_width + (kerning ? kerning.value().first.x_advance : 0);
+
+    return { float(advance), float(bearing) };
   }
 
   font_file::font_file(std::filesystem::path const& path)
     : _accessor{ path }
   {
     try_load_gpos();
+    try_load_gsub();
   }
-  
-  void font_file::try_load_gpos()
+
+  void font_file::try_load_gsub()
   {
-    auto script_offset = _accessor.script_offset(font_script::default_script);
+    auto script_offset = _accessor.script_offset(font_script::default_script, _accessor.gsub());
 
     if (!script_offset)
     {
-      throw std::runtime_error("Neither latn nor DFLT have been found");
+      // throw std::runtime_error("Neither latn nor DFLT have been found");
       return;
     }
 
-    auto const lang_offset = _accessor.lang_offset(font_language::default_language, *script_offset);
+    auto const lang_offset = _accessor.lang_offset(font_language::default_language, *script_offset, _accessor.gsub());
     if (!lang_offset)
     {
-      throw std::runtime_error("The lang was not found");
+      //throw std::runtime_error("The lang was not found");
       return;
     }
 
-    auto const kerning = _accessor.feature_offset(font_feature::ft_kern, *script_offset + *lang_offset);
+    _gsub_features.ligature = _accessor.feature_offset(font_feature::ft_liga, *script_offset + *lang_offset, _accessor.gsub());
+  }
+
+  std::optional<glyph_id> font_file::try_substitution(std::span<glyph_id const> glyphs) const
+  {
+    if (!_gsub_features.ligature)
+      return std::nullopt;
+
+    auto const feat = _accessor.gsub_feature_lookup(_gsub_features.ligature.value(), glyphs);
+    if (!feat)
+      return std::nullopt;
+    if (auto const sub = std::get_if<font_accessor::mono_substitution_feature>(&*feat))
+      return sub->substitution;
+    return std::nullopt;
+  }
+
+  void font_file::try_load_gpos()
+  {
+    auto script_offset = _accessor.script_offset(font_script::default_script, _accessor.gpos());
+
+    if (!script_offset)
+    {
+      //throw std::runtime_error("Neither latn nor DFLT have been found");
+      return;
+    }
+
+    auto const lang_offset = _accessor.lang_offset(font_language::default_language, *script_offset, _accessor.gpos());
+    if (!lang_offset)
+    {
+      //throw std::runtime_error("The lang was not found");
+      return;
+    }
+
+    auto const kerning = _accessor.feature_offset(font_feature::ft_kern, *script_offset + *lang_offset, _accessor.gpos());
     _gpos_features.kerning = kerning;
   }
 
-  std::optional<font_accessor::pair_feature> font_file::lookup_kerning(glyph_id first, glyph_id second) const
+  std::optional<font_accessor::pair_value_feature> font_file::lookup_kerning(glyph_id first, glyph_id second) const
   {
     if (!_gpos_features.kerning)
       return std::nullopt;
 
-    auto const lu = _accessor.feature_lookup(_gpos_features.kerning.value(), std::array{ first, second });
-    auto const vals = std::get_if<font_accessor::pair_feature>(&lu);
-    if (vals)
-      return *vals;
+    auto const lu = _accessor.gpos_feature_lookup(_gpos_features.kerning.value(), std::array{ first, second });
+    if (lu)
+    {
+      if (auto const pair = std::get_if<font_accessor::pair_value_feature>(&*lu))
+        return *pair;
+    }
     return std::nullopt;
   }
 
@@ -879,10 +994,38 @@ namespace goop
     return _accessor.units_per_em();
   }
 
+  rect font_file::get_rect(glyph_id glyph) const
+  {
+    auto const os = _accessor.glyph_offset_size_bytes(glyph);
+    if (os.size == 0)
+      return { {0,0},{0,0} };
+
+    _accessor.seek_to(*_accessor.table_offset(font_tag::table_glyf) + os.offset);
+
+    std::int16_t const num_contours = _accessor.r_u16();
+    std::int16_t const x_min = _accessor.r_u16();
+    std::int16_t const y_min = _accessor.r_u16();
+    std::int16_t const x_max = _accessor.r_u16();
+    std::int16_t const y_max = _accessor.r_u16();
+    rect bounds;
+    bounds.min.x = x_min;
+    bounds.min.y = y_min;
+    bounds.max.x = x_max;
+    bounds.max.y = y_max;
+    return bounds;
+  }
+
   void font_file::outline_impl(glyph_id glyph, std::vector<font_file::contour_point>& contours, std::vector<std::uint16_t>& end_points, rect* bounds) const
   {
-    constexpr static auto const tag = make_tag("glyf");
-    _accessor.seek_to(*_accessor.table_offset(tag) + _accessor.glyph_offset_bytes(glyph));
+    auto const os = _accessor.glyph_offset_size_bytes(glyph);
+    if (os.size == 0)
+    {
+      if (bounds)
+        *bounds = { {0,0},{0,0} };
+      return;
+    }
+
+    _accessor.seek_to(*_accessor.table_offset(font_tag::table_glyf) + os.offset);
 
     std::int16_t const num_contours = _accessor.r_u16();
     std::int16_t const x_min = _accessor.r_u16();

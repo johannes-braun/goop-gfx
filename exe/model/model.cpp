@@ -15,6 +15,8 @@
 #include <random>
 #include <generic/primitives.hpp>
 
+#include <vectors/font.hpp>
+
 //#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
 
@@ -303,7 +305,7 @@ std::vector<goop::lines::line> subsampled_shape(goop::vector_image const& image,
   struct path_visitor
   {
     std::vector<goop::lines::line> segments;
-    rnu::vec2d cursor {0, 0};
+    rnu::vec2d cursor{ 0, 0 };
     bool relative = false;
     float base_subsampling;
     rnu::vec2 last_curve_control;
@@ -377,7 +379,7 @@ std::vector<goop::lines::line> subsampled_shape(goop::vector_image const& image,
       auto const off = offset();
       goop::lines::curve curve{
         .start = cursor,
-        .control_start = {off.x+data.x1, off.y + data.y1},
+        .control_start = {off.x + data.x1, off.y + data.y1},
         .control_end = {off.x + data.x2, off.y + data.y2},
         .end = {off.x + data.x, off.y + data.y}
       };
@@ -398,12 +400,12 @@ std::vector<goop::lines::line> subsampled_shape(goop::vector_image const& image,
       };
       goop::lines::subsample(curve, base_subsampling, segments);
     }
-    
+
     void operator()(goop::close_data_t const& close)
     {
       segments.push_back({ .start = cursor, .end = last_move_target });
     }
-    
+
     void operator()(goop::move_data_t const& move)
     {
       last_move_target = move.value + offset();
@@ -468,42 +470,113 @@ float signed_distance(std::vector<goop::lines::line> const& polygon, rnu::vec2 p
   return (intersections == 0 ? 1 : -1) * dmin;
 }
 
-void emplace(std::vector<goop::lines::line> const& polygon, int basew, int baseh, float scale, int padding, float sdfw, std::vector<std::uint8_t>& img, int iw, int ih, int x, int y)
+void emplace(std::vector<goop::lines::line> const& polygon, goop::rect const& r, float scale, int padding, float sdfw, std::vector<std::uint8_t>& img, int iw, int ih, int x, int y)
 {
   auto const at = [&](int x, int y) -> std::uint8_t& { return img[x + y * iw]; };
 
-  int const w = basew * scale + padding * 2;
-  int const h = baseh * scale + padding * 2;
+  float const w = r.max.x - r.min.x + padding * 2;
+  float const h = r.max.y - r.min.y + padding * 2;
 
-  for (int i = 0; i < w; ++i)
+  for (int i = 0; i < std::ceil(w); ++i)
   {
-    for (int j = 0; j < h; ++j)
+    for (int j = 0; j < std::ceil(h); ++j)
     {
-      auto const signed_distance = ::signed_distance(polygon, { (i-padding) / scale, (j - padding) / scale }) * scale;
+      auto const signed_distance = ::signed_distance(polygon, { (i + r.min.x - padding) / scale, (j + r.min.y - padding) / scale }) * scale;
       auto min = -sdfw;
       auto max = sdfw;
-      at(x + i + padding, y + j + padding) = std::max<float>(at(x + i + padding, y + j + padding), (1 - std::clamp((signed_distance - min) / (max - min), 0.f, 1.f)) * 255);
+
+      auto const iix = x + i + r.min.x - padding;
+      auto const iiy = y + j + r.min.y - padding;
+
+      at(iix, iiy) = std::max<float>(at(iix, iiy), (1 - std::clamp((signed_distance - min) / (max - min), 0.0f, 1.0f)) * 255);
     }
   }
 }
 
-#include <vectors/font.hpp>
+namespace goop
+{
+  struct set_glyph
+  {
+    glyph_id glyph;
+    rnu::vec2 offset;
+    rect bounds;
+  };
+
+  std::vector<set_glyph> text_set(goop::font_file const& font, std::wstring_view str, float const em_size, rnu::vec2 cursor)
+  {
+    thread_local static std::vector<goop::glyph_id> glyphs;
+    glyphs.clear();
+    for (auto& c : str)
+    {
+      auto const gly = font.glyph_index(c);
+      glyphs.push_back(gly ? *gly : goop::glyph_id{ 0 });
+    }
+
+    bool has_substituted = true;
+    auto const font_scale = em_size / font.units_per_em();
+
+    while (has_substituted)
+    {
+      has_substituted = false;
+      for (int i = 0; i < glyphs.size() - 1; ++i)
+      {
+        auto const second = glyphs.size() - 1 - i;
+        auto const first = second - 1;
+
+        auto sub = i < glyphs.size() - 2 ? font.try_substitution(std::array{ glyphs[first - 1], glyphs[first], glyphs[second] }) : std::nullopt;
+        if (!sub)
+          sub = font.try_substitution(std::array{ glyphs[first], glyphs[second] });
+        if (sub)
+        {
+          has_substituted = true;
+          glyphs[first] = *sub;
+          glyphs.erase(glyphs.begin() + second);
+        }
+      }
+    }
+
+    std::vector<set_glyph> set_glyphs(glyphs.size());
+
+    auto const basey = 40;
+    auto const rad = 0.5f;
+
+    for (int i = 0; i < glyphs.size(); ++i)
+    {
+      auto const gly = glyphs[i];
+      auto& result = set_glyphs[i];
+      result.glyph = gly;
+      auto const rec = font.get_rect(gly);
+
+      auto const next_glyph = i < glyphs.size() - 1 ? glyphs[i + 1] : goop::glyph_id{ 0 };
+      auto const [ad1, be1] = font.advance_bearing(gly, next_glyph);
+
+      result.bounds = rec;
+      result.bounds.min *= font_scale;
+      result.bounds.max *= font_scale;
+      result.offset = cursor + rnu::vec2(be1 * font_scale, 0);
+
+      cursor.x += ad1 * font_scale;
+    }
+
+    return set_glyphs;
+  }
+}
 
 int main()
 {
-  goop::font_file fnt("../../../../../res/Roboto-Regular.ttf");
+  goop::font_file fnt("../../../../../res/BIZUDPGothic-Regular.ttf");
 
   std::vector<goop::lines::line_segment> outline;
-  auto const load_letter = [&](auto ch) {
+  auto const load_letter = [&](std::optional<goop::glyph_id> ch) {
     goop::rect bounds;
     outline.clear();
-    auto const gly = *fnt.glyph_index(ch);
+    auto const gly = *ch;
     fnt.outline(gly, outline, bounds);
 
     std::vector<goop::lines::line> letter;
     for (auto const& o : outline)
       std::visit([&](auto const& x) { goop::lines::subsample(x, 10, letter); }, o);
-    return std::tuple(gly, letter, bounds);
+    return letter;
   };
 
   auto const load_svg = [](auto&& path) {
@@ -518,46 +591,28 @@ int main()
   auto const i3 = load_svg("M9,5A4,4 0 0,1 13,9A4,4 0 0,1 9,13A4,4 0 0,1 5,9A4,4 0 0,1 9,5M9,15C11.67,15 17,16.34 17,19V21H1V19C1,16.34 6.33,15 9,15M16.76,5.36C18.78,7.56 18.78,10.61 16.76,12.63L15.08,10.94C15.92,9.76 15.92,8.23 15.08,7.05L16.76,5.36M20.07,2C24,6.05 23.97,12.11 20.07,16L18.44,14.37C21.21,11.19 21.21,6.65 18.44,3.63L20.07,2Z");
   auto const i4 = load_svg("M22.11 21.46L2.39 1.73L1.11 3L5.2 7.09C3.25 7.5 1.85 9.27 2 11.31C2.12 12.62 2.86 13.79 4 14.45V16C4 16.55 4.45 17 5 17H7V14.88C5.72 13.58 5 11.83 5 10C5 9.11 5.18 8.23 5.5 7.4L7.12 9C6.74 10.84 7.4 12.8 9 14V16C9 16.55 9.45 17 10 17H14C14.31 17 14.57 16.86 14.75 16.64L17 18.89V19C17 19.34 16.94 19.68 16.83 20H18C18.03 20 18.06 20 18.09 20L20.84 22.73L22.11 21.46M9.23 11.12L10.87 12.76C10.11 12.46 9.53 11.86 9.23 11.12M13 15H11V12.89L13 14.89V15M10.57 7.37L9.13 5.93C10.86 4.72 13.22 4.67 15 6C16.26 6.94 17 8.43 17 10C17 11.05 16.67 12.05 16.08 12.88L14.63 11.43C14.86 11 15 10.5 15 10C15 8.34 13.67 7 12 7C11.5 7 11 7.14 10.57 7.37M17.5 14.31C18.47 13.09 19 11.57 19 10C19 8.96 18.77 7.94 18.32 7C19.63 7.11 20.8 7.85 21.46 9C22.57 10.9 21.91 13.34 20 14.45V16C20 16.22 19.91 16.42 19.79 16.59L17.5 14.31M10 18H14V19C14 19.55 13.55 20 13 20H11C10.45 20 10 19.55 10 19V18M7 19C7 19.34 7.06 19.68 7.17 20H6C5.45 20 5 19.55 5 19V18H7V19Z");
 
-  auto const str = L"1+2=9";
-
-  auto const [gly1, l1, bounds1] = load_letter(str[0]);
-  auto const [gly2, l2, bounds2] = load_letter(str[1]);
-  auto const [gly3, l3, bounds3] = load_letter(str[2]);
-  auto const [gly4, l4, bounds4] = load_letter(str[3]);
-  auto const [gly5, l5, bounds5] = load_letter(str[4]);
-  
-
   {
     int iw = 1024;
     int ih = 1024;
     std::vector<std::uint8_t> img(iw * ih);
 
-    emplace(i0, 24, 24, 1, 5, 1.f, img, iw, ih, 0, 0);
+    emplace(i0, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8);
+    emplace(i1, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8 + 24);
+    emplace(i2, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8 + 24 + 24);
+    emplace(i3, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8 + 24 + 24 + 24);
+    emplace(i4, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8 + 24 + 24 + 24 + 24);
 
-    auto const size = 48 / fnt.units_per_em();
-    auto pos = 24 + 10;
+    auto const size = 16;
+    auto const scale = size / fnt.units_per_em();
 
-    auto const basey = 40;
+    auto const rad = 0.5f;
 
-    auto const [ad1, be1] = fnt.advance_bearing(gly1, gly2);
-    emplace(l1, bounds1.max.x - bounds1.min.x, bounds1.max.y - bounds1.min.y, size, 10, 4.f, img, iw, ih, pos + be1 * size, basey);
-    pos += ad1 * size;
-    auto const [ad2, be2] = fnt.advance_bearing(gly2, gly3);
-    emplace(l2, bounds2.max.x - bounds2.min.x, bounds2.max.y - bounds2.min.y, size, 10, 4.f, img, iw, ih, pos + be2 * size, basey);
-    pos += ad2 * size;
-    auto const [ad3, be3] = fnt.advance_bearing(gly3, gly4);
-    emplace(l3, bounds3.max.x - bounds3.min.x, bounds3.max.y - bounds3.min.y, size, 10, 4.f, img, iw, ih, pos + be3 * size, basey);
-    pos += ad3 * size;
-    auto const [ad4, be4] = fnt.advance_bearing(gly4, gly5);
-    emplace(l4, bounds4.max.x - bounds4.min.x, bounds4.max.y - bounds4.min.y, size, 10, 4.f, img, iw, ih, pos + be4 * size, basey);
-    pos += ad4 * size;
-    auto const [ad5, be5] = fnt.advance_bearing(gly5);
-    emplace(l5, bounds5.max.x - bounds5.min.x, bounds5.max.y - bounds5.min.y, size, 10, 4.f, img, iw, ih, pos + be5 * size, basey);
+    for (auto const& set : text_set(fnt, L"Welch fieser Fön mit Spaß 僕の部屋は元気でした я люблю яблока", size, { 40, 40 }))
+    {
+      auto const outline = load_letter(set.glyph);
 
-    //emplace(i1, 24, 24, 1, 5, 1.f, img, iw, ih, 24 + 10, 0);
-    /*emplace(i2, 24, 24, 1, 5, 5.f, img, iw, ih, 48 + 20, 0);
-    emplace(i3, 24, 24, 1, 5, 5.f, img, iw, ih, 72 + 30, 0);
-    emplace(i4, 24, 24, 1, 5, 5.f, img, iw, ih, 96 + 40, 0);*/
+      emplace(outline, set.bounds, scale, 2, rad, img, iw, ih, set.offset.x, set.offset.y);
+    }
 
     stbi_write_png("../../../../../result.png", iw, ih, 1, img.data(), 0);
   }
@@ -649,7 +704,7 @@ int main()
   for (int i = 0; i < 100; ++i)
   {
     rnu::shared_entity& ball = balls.emplace_back(load_gltf_as_entity("../../../../../res/ballymcballface/scene.gltf", ecs, app, main_geometry));
-    ball->add(goop::transform_component{ .position = rnu::vec3(dist(gen), 0.5f, dist(gen)), .scale = rnu::vec3(dists(gen))});
+    ball->add(goop::transform_component{ .position = rnu::vec3(dist(gen), 0.5f, dist(gen)), .scale = rnu::vec3(dists(gen)) });
     ball->add(goop::collider_component{ .shape = goop::sphere_collider{.center_offset = rnu::vec3{0, 0, 0}, .radius = 1.f} });
   }
 
@@ -714,7 +769,7 @@ int main()
     ptcl->get<goop::transform_component>()->rotation = rnu::quat(cosf(theta), 0, sinf(theta), 0);
 
     auto fwd = ptcl->get<goop::transform_component>()->rotation * rnu::vec3(0, 0, -1);
-    auto right = ptcl->get<goop::transform_component>()->rotation * rnu::vec3(1,0,0);
+    auto right = ptcl->get<goop::transform_component>()->rotation * rnu::vec3(1, 0, 0);
     auto rfac = 10 * (glfwGetKey(app.window().get(), GLFW_KEY_RIGHT) - glfwGetKey(app.window().get(), GLFW_KEY_LEFT));
     auto ffac = -10 * (glfwGetKey(app.window().get(), GLFW_KEY_DOWN) - glfwGetKey(app.window().get(), GLFW_KEY_UP));
 

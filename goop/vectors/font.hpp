@@ -11,6 +11,8 @@
 #include <span>
 #include <any>
 #include <fstream>
+#include <sstream>
+#include <functional>
 
 namespace goop
 {
@@ -20,10 +22,32 @@ namespace goop
   class font_accessor
   {
   public:
+    struct lookup_query
+    {
+      std::uint16_t type;
+      std::uint16_t flags;
+      std::size_t lookup_offset;
+      std::size_t subtable_offset;
+    };
+
+    struct gspec_off
+    {
+      std::size_t script_list = 0;
+      std::size_t feature_list = 0;
+      std::size_t lookup_list = 0;
+      std::size_t feature_variations = 0;
+    };
+
     struct horizontal_metric
     {
       std::uint16_t advance_width;
       std::int16_t left_bearing;
+    };
+
+    struct offset_size
+    {
+      std::ptrdiff_t offset;
+      std::size_t size;
     };
 
     struct value_record
@@ -39,10 +63,16 @@ namespace goop
       std::int16_t y_advance_device_off;
     };
 
-    using mono_feature = value_record;
-    using pair_feature = std::pair<value_record, value_record>;
+    struct mono_substitution_feature
+    {
+      glyph_id substitution;
+    };
 
-    using feature = std::variant<std::monostate, mono_feature, pair_feature>;
+    using mono_value_feature = value_record;
+    using pair_value_feature = std::pair<value_record, value_record>;
+
+    using gpos_feature = std::variant<mono_value_feature, pair_value_feature>;
+    using gsub_feature = std::variant<mono_substitution_feature>;
 
     font_accessor(std::filesystem::path const& path);
 
@@ -51,16 +81,17 @@ namespace goop
     void seek_to(std::size_t offset);
     std::size_t position();
     horizontal_metric hmetric(glyph_id glyph);
-    std::size_t glyph_offset_bytes(glyph_id glyph);
+    offset_size glyph_offset_size_bytes(glyph_id glyph);
     std::optional<glyph_id> index_of(char32_t character);
     std::optional<glyph_class> class_of(std::size_t class_table, glyph_id glyph);
     std::size_t units_per_em() const;
 
     // GPOS
-    std::optional<std::uint16_t> script_offset(font_script script);
-    std::optional<std::uint16_t> lang_offset(font_language lang, std::uint16_t script);
-    std::optional<std::uint16_t> feature_offset(font_feature feat, std::uint16_t lang);
-    feature feature_lookup(std::uint16_t feat, std::span<glyph_id const> glyphs);
+    std::optional<std::uint16_t> script_offset(font_script script, std::optional<gspec_off> const& offset);
+    std::optional<std::uint16_t> lang_offset(font_language lang, std::uint16_t script, std::optional<gspec_off> const& offset);
+    std::optional<std::uint16_t> feature_offset(font_feature feat, std::uint16_t lang, std::optional<gspec_off> const& offset);
+    std::optional<gpos_feature> gpos_feature_lookup(std::uint16_t feat, std::span<glyph_id const> glyphs);
+    std::optional<gsub_feature> gsub_feature_lookup(std::uint16_t feat, std::span<glyph_id const> glyphs);
 
 
     // read funcs
@@ -76,6 +107,10 @@ namespace goop
     void s_u32();
     void s_u64();
     void skip(std::size_t bytes);
+
+    std::optional<gspec_off> const& gpos() const;
+    std::optional<gspec_off> const& gsub() const;
+    bool good() const { return _file.good(); }
 
   private:
     std::optional<std::size_t> coverage_index(std::size_t offset, glyph_id glyph);
@@ -144,16 +179,9 @@ namespace goop
     } _hhea;
 
     glyph_index_data _glyph_indexer;
-
-    struct gpos_off
-    {
-      std::size_t script_list = 0;
-      std::size_t feature_list = 0;
-      std::size_t lookup_list = 0;
-      std::size_t feature_variations = 0;
-    };
-
-    std::optional<gpos_off>  _gpos_off;
+    std::optional<gspec_off>  _gpos_off;
+    std::optional<gspec_off>  _gsub_off;
+    std::size_t _file_size;
     std::size_t _hmtx_offset;
     std::uint16_t _num_glyphs;
     std::ifstream _file;
@@ -176,7 +204,9 @@ namespace goop
 
     float units_per_em() const;
 
-    std::pair<float, float> advance_bearing(glyph_id current, glyph_id next = glyph_id{0});
+    std::pair<float, float> advance_bearing(glyph_id current, glyph_id next = glyph_id{0}) const;
+    std::optional<glyph_id> try_substitution(std::span<glyph_id const> glyphs) const;
+    rect get_rect(glyph_id glyph) const;
 
   private:
     struct contour_point
@@ -187,12 +217,18 @@ namespace goop
     };
     void outline_impl(glyph_id glyph, std::vector<font_file::contour_point>& contours, std::vector<std::uint16_t>& end_points, rect* bounds) const;
     void try_load_gpos();
-    std::optional<font_accessor::pair_feature> lookup_kerning(glyph_id first, glyph_id second) const;
+    void try_load_gsub();
+    std::optional<font_accessor::pair_value_feature> lookup_kerning(glyph_id first, glyph_id second) const;
 
     struct gpos_features
     {
       std::optional<std::uint16_t> kerning;
     } _gpos_features;
+
+    struct gsub_features
+    {
+      std::optional<std::uint16_t> ligature;
+    } _gsub_features;
 
     mutable font_accessor _accessor;
   };
