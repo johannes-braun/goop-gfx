@@ -1,6 +1,6 @@
 #pragma once
 
-#include "font_tag.hpp"
+#include "font_table.hpp"
 
 namespace goop
 {
