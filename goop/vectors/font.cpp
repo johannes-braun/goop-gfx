@@ -1359,6 +1359,18 @@ namespace goop
       return _put;
     }
 
+    bool empty() const { return size() == 0; }
+    T const& back() const { 
+      if (empty())
+        throw std::runtime_error("Cannot access back element of empty list.");
+      return _buffer[size() - 1];
+    }
+    T& back() {
+      if (empty())
+        throw std::runtime_error("Cannot access back element of empty list.");
+      return _buffer[size() - 1]; 
+    }
+
     T const& operator[](std::size_t index) const
     {
       return _buffer[index];
@@ -1449,25 +1461,26 @@ namespace goop
 
       int start_point = base_end_point;
       int const start_contour = contours.size();
-      for (int i = 0; i < num_contours; ++i)
+
+      for (int i = start_point; i < end_points.back() + 1; ++i)
       {
-        for (int m = start_point; m <= end_points[base_end_point_count + i]; ++m)
+        // first read flag, then determine how data is read.
+        auto& next = contours.emplace_back();
+        next.flags = reader.r_u8();
+        next.on_line = next.flags & flag_on_curve;
+        if (next.flags & flag_repeat)
         {
-          // first read flag, then determine how data is read.
-          auto& next = contours.emplace_back();
-          next.flags = reader.r_u8();
-          next.on_line = next.flags & flag_on_curve;
-          if (next.flags & flag_repeat)
+          auto const times = reader.r_u8();
+
+          if (i + times > end_points.back() + 1)
+            __debugbreak();
+
+          for (int rep = 0; rep < times; ++rep)
           {
-            auto const times = reader.r_u8();
-            for (int rep = 0; rep < times; ++rep)
-            {
-              ++m;
-              contours.push_back(next);
-            }
+            ++i;
+            contours.push_back(next);
           }
         }
-        start_point = end_points[base_end_point_count + i] + 1;
       }
 
       for (int m = start_contour; m < contours.size(); ++m)
