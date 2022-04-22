@@ -120,6 +120,11 @@ namespace goop
     return _gsub_off;
   }
 
+  std::size_t font_accessor::num_glyphs() const
+  {
+    return _maxp.num_glyphs;
+  }
+
   font_accessor::font_accessor(std::span<std::byte const> data, bool copy)
     : _file_data(copy ? std::vector(begin(data), end(data)) : data)
   {
@@ -1157,6 +1162,11 @@ namespace goop
     return _accessor.index_of(character);
   }
 
+  std::size_t font::num_glyphs() const
+  {
+    return _accessor.num_glyphs();
+  }
+
   std::pair<float, float> font::advance_bearing(glyph_id current) const
   {
     auto hmetric = _accessor.hmetric(current);
@@ -1164,10 +1174,10 @@ namespace goop
     auto const rec = get_rect(current);
     if (hmetric.advance_width == 0)
     {
-      hmetric.advance_width = rec.max.x - rec.min.x;
-      hmetric.left_bearing = rec.min.x;
+      hmetric.advance_width = rec.size.x;
+      hmetric.left_bearing = rec.position.x;
     }
-    auto const bearing = rec.min.x - hmetric.left_bearing;
+    auto const bearing = rec.position.x - hmetric.left_bearing;
     auto const advance = hmetric.advance_width;
 
     return { float(advance), float(bearing) };
@@ -1313,10 +1323,10 @@ namespace goop
     std::int16_t const x_max = reader.r_u16();
     std::int16_t const y_max = reader.r_u16();
     rect bounds;
-    bounds.min.x = x_min;
-    bounds.min.y = y_min;
-    bounds.max.x = x_max;
-    bounds.max.y = y_max;
+    bounds.position.x = x_min;
+    bounds.position.y = y_min;
+    bounds.size.x = x_max - x_min;
+    bounds.size.y = y_max - y_min;
     return bounds;
   }
 
@@ -1414,10 +1424,10 @@ namespace goop
 
     if (bounds)
     {
-      bounds->min.x = x_min;
-      bounds->min.y = y_min;
-      bounds->max.x = x_max;
-      bounds->max.y = y_max;
+      bounds->position.x = x_min;
+      bounds->position.y = y_min;
+      bounds->size.x = x_max - x_min;
+      bounds->size.y = y_max - y_min;
     }
 
     auto const base_end_point_count = end_points.size();

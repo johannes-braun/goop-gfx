@@ -120,6 +120,7 @@ namespace goop
 
     std::optional<gspec_off> const& gpos() const;
     std::optional<gspec_off> const& gsub() const;
+    std::size_t num_glyphs() const;
 
   private:
     void init();
@@ -231,8 +232,8 @@ namespace goop
 
   struct rect
   {
-    rnu::vec2 min;
-    rnu::vec2 max;
+    rnu::vec2 position;
+    rnu::vec2 size;
   };
 
   struct line
@@ -290,6 +291,7 @@ namespace goop
     font(std::span<std::byte const> data, bool copy = false);
 
     glyph_id glyph(char32_t character) const;
+    std::size_t num_glyphs() const;
     
     template<typename Func>
     void outline(glyph_id glyph, rect& bounds, Func&& func) const

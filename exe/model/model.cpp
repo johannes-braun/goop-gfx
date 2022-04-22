@@ -15,7 +15,7 @@
 #include <random>
 #include <generic/primitives.hpp>
 #include <rnu/thread_pool.hpp>
-
+#include <map>
 #include <vectors/font.hpp>
 
 //#define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -462,8 +462,12 @@ float signed_distance(std::vector<goop::lines::line> const& polygon, rnu::vec2 p
 
   for (auto const& line : polygon)
   {
-    auto const d = minimum_distance(line.start, line.end, point + 1e-4);
-    intersections += scanline_test(line.start, line.end, point + 1e-4);
+    auto const f = fmodf(point.y, 1.0f);
+    if (f == 0)
+      point.y += 1e-3f;
+
+    auto const d = minimum_distance(line.start, line.end, point);
+    intersections += scanline_test(line.start, line.end, point);
 
     if (abs(d) < abs(dmin))
       dmin = d;
@@ -471,29 +475,29 @@ float signed_distance(std::vector<goop::lines::line> const& polygon, rnu::vec2 p
   return (intersections == 0 ? 1 : -1) * dmin;
 }
 
-void emplace(std::vector<goop::lines::line> const& polygon, goop::rect const& r, float scale, int padding, float sdfw, std::vector<std::uint8_t>& img, int iw, int ih, int x, int y)
+void emplace(std::vector<goop::lines::line> const& polygon, goop::rect const& r, float scale, int padding, float sdfw, std::vector<std::uint8_t>& img, int iw, int ih, int x, int y, rnu::vec2 voff = { 0,0 })
 {
   auto const at = [&](int x, int y) -> std::uint8_t& { return img[x + y * iw]; };
 
   //float const w = r.max.x - r.min.x + padding * 2;
   //float const h = r.max.y - r.min.y + padding * 2;
-  auto const min_x = std::floor(r.min.x) - padding;
-  auto const min_y = std::floor(r.min.y) - padding;
-  auto const max_x = std::floor(r.max.x) + padding;
-  auto const max_y = std::floor(r.max.y) + padding;
+  auto const min_x = std::floor(r.position.x) - padding;
+  auto const min_y = std::floor(r.position.y) - padding;
+  auto const max_x = std::floor(r.position.x + r.size.x) + padding;
+  auto const max_y = std::floor(r.position.y + r.size.y) + padding;
 
   for (int i = min_x; i <= max_x; ++i)
   {
     for (int j = min_y; j <= max_y; ++j)
     {
-      auto const signed_distance = ::signed_distance(polygon, { i / scale, j / scale }) * scale;
+      auto const signed_distance = ::signed_distance(polygon, { (i + voff.x) / scale, (j + voff.y) / scale }) * scale;
       auto min = -sdfw;
       auto max = sdfw;
 
       auto const iix = x + i;
       auto const iiy = y + j;
 
-      at(iix, iiy) = std::max<float>(at(iix, iiy), (1 - std::clamp((signed_distance - min) / (max - min), 0.0f, 1.0f)) * 255);
+      at(iix, iiy) = std::max<float>(at(iix, iiy), (1 - std::clamp((signed_distance - min) / (max - min), 0.2f, 0.8f)) * 255);
     }
   }
 }
@@ -582,7 +586,7 @@ namespace goop
 
         auto const next_glyph = i < glyphs.size() - 1 ? glyphs[i + 1] : goop::glyph_id{ 0 };
 
-        auto const kerning = !kerning_feature ? std::nullopt : font.lookup_positioning(*kerning_feature, std::array{gly, next_glyph});
+        auto const kerning = !kerning_feature ? std::nullopt : font.lookup_positioning(*kerning_feature, std::array{ gly, next_glyph });
 
         auto const kerning_values = !kerning ? nullptr : std::get_if<font_accessor::pair_value_feature>(&*kerning);
 
@@ -595,8 +599,8 @@ namespace goop
         }
 
         result.bounds = rec;
-        result.bounds.min *= font_scale;
-        result.bounds.max *= font_scale;
+        result.bounds.position *= font_scale;
+        result.bounds.size *= font_scale;
         result.offset = cursor + rnu::vec2(be1 * font_scale, 0);
 
         cursor.x += ad1 * font_scale;
@@ -608,15 +612,391 @@ namespace goop
 
     return set_glyphs;
   }
+
+  //struct splitter
+  //{
+  //  rect rectangle;
+
+  //  std::optional<rect> possible_right;
+  //  std::optional<rect> possible_bottom;
+
+  //  std::size_t parent;
+  //  std::size_t child_right = 0;
+  //  std::size_t child_bottom = 0;
+  //};
+
+  //class split_tree
+  //{
+  //public:
+  //  split_tree(int w, int h)
+  //  {
+  //    auto& r = _splits.emplace_back();
+  //    r.rectangle.position = { 0, 0 };
+  //    r.rectangle.size = { w, h };
+  //  }
+
+  //  void append(rect& r)
+  //  {
+  //    // r is sorted by height.
+  //    // 1) find rightmost node
+  //    // 2) if fits: emplace
+  //    //    else: go to parent and try 2) again.
+
+  //    auto node = rightmost(0);
+  //    append_at(node, r);
+  //  }
+
+  //private:
+  //  void append_at(std::size_t node, rect& r)
+  //  {
+
+  //    if (at(node).possible_right && fits(r, at(node).possible_right.value()))
+  //    {
+  //      resolve_as_right(node);
+  //      emplace_at(at(node).child_right, r);
+  //    }
+  //    else if (at(node).possible_bottom && fits(r, at(node).possible_bottom.value()))
+  //    {
+  //      resolve_as_bottom(node);
+  //      emplace_at(at(node).child_bottom, r);
+  //    }
+  //    else if (at(node).child_right == 0 && at(node).child_bottom == 0 && fits(r, at(node).rectangle))
+  //    {
+  //      emplace_at(node, r);
+  //    }
+  //    else
+  //    {
+  //      resolve_as_leaf(node);
+  //      append_at(shuffle_up(node), r);
+  //    }
+  //  }
+
+  //  void resolve_as_leaf(std::size_t i)
+  //  {
+  //  }
+  //  void resolve_as_right(std::size_t i)
+  //  {
+  //    at(i).child_right = _splits.size();
+  //    at(i).child_bottom = _splits.size() + 1;
+
+  //    auto& right = _splits.emplace_back();
+  //    right.parent = i;
+  //    right.rectangle = at(i).possible_right.value();
+  //    auto& bottom = _splits.emplace_back();
+  //    bottom.parent = i;
+  //    bottom.rectangle = at(i).possible_bottom.value();
+
+  //    at(i).possible_right = std::nullopt;
+  //    at(i).possible_bottom = std::nullopt;
+  //  }
+  //  void resolve_as_bottom(std::size_t i)
+  //  {
+  //    at(i).child_right = _splits.size();
+  //    at(i).child_bottom = _splits.size() + 1;
+
+  //    auto& right = _splits.emplace_back();
+  //    auto& bottom = _splits.emplace_back();
+
+  //    right.parent = i;
+  //    right.rectangle = at(i).possible_right.value();
+  //    right.rectangle.size.y -= at(i).possible_bottom.value().size.y;
+  //    bottom.parent = i;
+  //    bottom.rectangle = at(i).possible_bottom.value();
+
+  //    at(i).possible_right = std::nullopt;
+  //    at(i).possible_bottom = std::nullopt;
+  //  }
+
+  //  bool fits(rect const& r, rect const& other)
+  //  {
+  //    return r.size <= other.size;
+  //  }
+
+  //  splitter& at(std::size_t pos)
+  //  {
+  //    return _splits[pos];
+  //  }
+  //  splitter const& at(std::size_t pos) const
+  //  {
+  //    return _splits[pos];
+  //  }
+
+  //  std::size_t shuffle_up(std::size_t base) const
+  //  {
+  //    // go to parent and then its bottom child
+  //    auto& p = at(at(base).parent);
+
+  //    if (p.child_right == base)
+  //      return rightmost(p.child_bottom);
+  //    else
+  //      return rightmost(at(p.parent).child_bottom);
+
+  //    //return at(at(base).parent).child_bottom;
+  //  }
+
+  //  std::size_t rightmost(std::size_t src) const
+  //  {
+  //    std::size_t node = src;
+  //    while (at(node).child_right != 0)
+  //      node = at(node).child_right;
+  //    return node;
+  //  }
+
+  //  void emplace_at(std::size_t index, rect& r)
+  //  {
+  //    r.position = at(index).rectangle.position;
+
+  //    auto full_rect_right = at(index).rectangle;
+  //    full_rect_right.position.x += r.size.x;
+  //    full_rect_right.size.x -= r.size.x;
+
+  //    auto full_rect_bottom = at(index).rectangle;
+  //    full_rect_bottom.position.y += r.size.y;
+  //    full_rect_bottom.size.y -= r.size.y;
+
+  //    _splits[index].rectangle = r;
+  //    _splits[index].possible_right = full_rect_right;
+  //    _splits[index].possible_bottom = full_rect_bottom;
+  //  }
+
+  //  std::vector<splitter> _splits;
+  //};
+
+
+
+  class skyline_bestfit_packer
+  {
+  public:
+    int pack(std::span<rect> rectangles, int width)
+    {
+      std::vector<std::size_t> indices(rectangles.size());
+      std::iota(begin(indices), end(indices), 0ull);
+
+      std::ranges::sort(indices, [&](std::size_t a, std::size_t b) {  return rectangles[a].size.y > rectangles[b].size.y; });
+
+      _nodes.push_back(node{ 0, 0, (width) });
+
+      int result_height = 0;
+      for (auto index : indices)
+      {
+        rect& r = rectangles[index];
+
+        decltype(_nodes)::iterator best_iter = _nodes.end();
+
+        int best_num_nodes = 0;
+        float best_width = std::numeric_limits<float>::max();
+        float best_y = std::numeric_limits<float>::max();
+        float best_last_y = 0;
+
+        float best_heuristic = std::numeric_limits<float>::max();
+
+        int i = 0;
+        for (auto iter = _nodes.begin(); iter != _nodes.end(); ++iter, ++i)
+        {
+          if (iter->y > best_y)
+            continue;
+
+          float full_width = iter->width;
+          auto next = std::next(iter);
+          float y = iter->y;
+          float min_y = iter->y;
+          float last_y = iter->y;
+          int nodes = 1;
+          float overhang = 0;
+          while (full_width <= r.size.x && next != _nodes.end())
+          {
+            full_width += next->width;
+            y = std::max<int>(next->y, y);
+            min_y = std::min<int>(next->y, min_y);
+            last_y = next->y;
+            nodes++;
+            next = std::next(next);
+          }
+
+          float heuristic = y;
+
+          if (full_width < r.size.x)
+            break;
+
+          if (best_heuristic > heuristic)
+          {
+            best_heuristic = heuristic;
+            best_y = y;
+            best_width = full_width;
+            best_iter = iter;
+            best_last_y = last_y;
+            best_num_nodes = nodes;
+          }
+        }
+
+        if (best_iter == _nodes.end())
+          __debugbreak();
+        
+        r.position.x = best_iter->x;
+        r.position.y = best_y;
+
+        result_height = std::max<int>(result_height, r.position.y + r.size.y);
+
+        node new_node;
+        new_node.x = best_iter->x;
+        new_node.y = best_y + r.size.y;
+        new_node.width = r.size.x;
+
+        node new_next_node;
+        new_next_node.x = best_iter->x + r.size.x;
+        new_next_node.y = best_last_y;
+        new_next_node.width = best_width - new_node.width;
+
+        if (best_width < new_node.width)
+          __debugbreak();
+
+        auto const pos = _nodes.erase(best_iter, std::next(best_iter, best_num_nodes));
+        if(new_next_node.width != 0 && new_node.width != 0)
+          _nodes.insert(pos, { new_node, new_next_node });
+        else if (new_next_node.width == 0 && new_node.width != 0)
+          _nodes.insert(pos, new_node);
+        else if (new_next_node.width != 0 && new_node.width == 0)
+          _nodes.insert(pos, new_next_node);
+        
+      }
+
+      return result_height;
+    }
+
+  private:
+    struct node
+    {
+      int x;
+      int y;
+      int width;
+    };
+
+    std::list<node> _nodes;
+  };
+
+
+
+
+
+
+
+
+
+
+  template <typename t> void move(std::vector<t>& v, size_t oldIndex, size_t newIndex)
+  {
+    if (oldIndex > newIndex)
+      std::rotate(v.rend() - oldIndex - 1, v.rend() - oldIndex, v.rend() - newIndex);
+    else
+      std::rotate(v.begin() + oldIndex, v.begin() + oldIndex + 1, v.begin() + newIndex + 1);
+  }
+
+  class rect_pack
+  {
+  public:
+    int int_pack(std::span<rect> rectangles, int width, int height)
+    {
+      int done = 0;
+      std::vector<int> remapping(rectangles.size());
+      std::iota(begin(remapping), end(remapping), 0);
+
+      for (auto& i : remapping)
+      {
+        auto& r = rectangles[i];
+        r.position.x = std::floorf(r.position.x);
+        r.position.y = std::floorf(r.position.y);
+        r.size.x = std::ceilf(r.size.x);
+        r.size.y = std::ceilf(r.size.y);
+      }
+
+      //std::ranges::sort(remapping, [&](int const& lhs, int const& rhs) { return rectangles[lhs].size.x < rectangles[rhs].size.x || (rectangles[lhs].size.x == rectangles[rhs].size.x && rectangles[lhs].size.y < rectangles[rhs].size.y); });
+      std::ranges::sort(remapping, [&](int const& lhs, int const& rhs) { return rectangles[lhs].size.y > rectangles[rhs].size.y; });
+
+      _columns[0] = rect{ {0, 0}, {width, height} };
+
+      int max_height = 0;
+      bool quit = false;
+      while (!quit)
+      {
+        for (auto iter = _columns.begin(); iter != _columns.end(); ++iter)
+        {
+          auto const& [id, r] = *iter;
+          auto& elem = rectangles[remapping[done]];
+
+          rect fullrect = r;
+          auto const begin_iter = iter;
+          iter = std::next(iter);
+
+          while (iter != end(_columns) && fullrect.size.x < elem.size.x)
+          {
+            fullrect.size.x += iter->second.size.x;
+            fullrect.position.y = std::max(fullrect.position.y, iter->second.position.y);
+            fullrect.size.y = std::min(fullrect.size.y, iter->second.size.y);
+            iter = std::next(iter);
+          }
+
+          if (fullrect.size.x < elem.size.x || fullrect.size.y < elem.size.y)
+          {
+            if (iter == end(_columns))
+              break;
+            continue;
+          }
+
+          int const split_height = std::prev(iter)->second.position.y;
+
+          _columns.erase(begin_iter, iter);
+
+          auto [a, b] = split(fullrect, fullrect.position.x + elem.size.x);
+          elem.position = a.position;
+          a.position.y += elem.size.y;
+          a.size.y -= elem.size.y;
+          b.position.y = split_height;
+          b.size.y += fullrect.position.y - split_height;
+          _columns[a.position.x] = a;
+
+          if (b.size.x != 0)
+            _columns[b.position.x] = b;
+          max_height = std::max<int>(max_height, elem.position.y + elem.size.y);
+
+          iter = _columns.find(a.position.x);
+
+          ++done;
+          if (done == remapping.size())
+          {
+            quit = true;
+            break;
+          }
+        }
+      }
+      return max_height;
+    }
+
+  private:
+    std::pair<rect, rect> split(rect r, int at)
+    {
+      rect other = r;
+      other.size.x = at - other.position.x;
+      r.size.x -= other.size.x;
+      r.position.x = at;
+      return { other, r };
+    }
+
+    std::map<int, rect> _columns;
+  };
 }
 
 int main()
 {
   goop::font fnt("../../../../../res/MPLUS1p-Regular.ttf");
 
-  auto const load_letter = [&](std::optional<goop::glyph_id> ch) {
+  auto const load_letter = [&](std::optional<goop::glyph_id> ch) -> std::vector<goop::lines::line> const& {
+    static std::mutex m;
+    std::unique_lock lock(m);
+
     static thread_local std::vector<goop::outline_segment> outline;
     outline.clear();
+    static thread_local std::vector<goop::lines::line> letter;
+    letter.clear();
 
     goop::rect bounds;
     auto const gly = *ch;
@@ -637,13 +1017,11 @@ int main()
           .end = line.end
           }, 10.f, letter);
       }
-
-      std::vector<goop::lines::line> letter;
     } visitor;
 
     fnt.outline(gly, bounds, [&](goop::outline_segment const& o) { std::visit(visitor, o); });
 
-    return visitor.letter;
+    return letter;
   };
 
   auto const load_svg = [](auto&& path) {
@@ -659,37 +1037,106 @@ int main()
   auto const i4 = load_svg("M22.11 21.46L2.39 1.73L1.11 3L5.2 7.09C3.25 7.5 1.85 9.27 2 11.31C2.12 12.62 2.86 13.79 4 14.45V16C4 16.55 4.45 17 5 17H7V14.88C5.72 13.58 5 11.83 5 10C5 9.11 5.18 8.23 5.5 7.4L7.12 9C6.74 10.84 7.4 12.8 9 14V16C9 16.55 9.45 17 10 17H14C14.31 17 14.57 16.86 14.75 16.64L17 18.89V19C17 19.34 16.94 19.68 16.83 20H18C18.03 20 18.06 20 18.09 20L20.84 22.73L22.11 21.46M9.23 11.12L10.87 12.76C10.11 12.46 9.53 11.86 9.23 11.12M13 15H11V12.89L13 14.89V15M10.57 7.37L9.13 5.93C10.86 4.72 13.22 4.67 15 6C16.26 6.94 17 8.43 17 10C17 11.05 16.67 12.05 16.08 12.88L14.63 11.43C14.86 11 15 10.5 15 10C15 8.34 13.67 7 12 7C11.5 7 11 7.14 10.57 7.37M17.5 14.31C18.47 13.09 19 11.57 19 10C19 8.96 18.77 7.94 18.32 7C19.63 7.11 20.8 7.85 21.46 9C22.57 10.9 21.91 13.34 20 14.45V16C20 16.22 19.91 16.42 19.79 16.59L17.5 14.31M10 18H14V19C14 19.55 13.55 20 13 20H11C10.45 20 10 19.55 10 19V18M7 19C7 19.34 7.06 19.68 7.17 20H6C5.45 20 5 19.55 5 19V18H7V19Z");
 
   {
-    int iw = 1024;
-    int ih = 1024;
-    std::vector<std::uint8_t> img(iw * ih);
 
-    emplace(i0, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8);
-    emplace(i1, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8 + 24);
-    emplace(i2, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8 + 24 + 24);
-    emplace(i3, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8 + 24 + 24 + 24);
-    emplace(i4, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8 + 24 + 24 + 24 + 24);
+    //emplace(i0, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8);
+    //emplace(i1, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8 + 24);
+    //emplace(i2, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8 + 24 + 24);
+    //emplace(i3, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8 + 24 + 24 + 24);
+    //emplace(i4, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8 + 24 + 24 + 24 + 24);
 
-    auto const size = 15;
+    auto const size = 20;
     auto const scale = size / fnt.units_per_em();
 
     auto const rad = 0.5f;
 
-    std::vector<std::future<std::pair<goop::set_glyph, std::vector<goop::lines::line>>>> set_outlines;
+    //std::vector<std::future<std::pair<goop::set_glyph, std::vector<goop::lines::line>>>> set_outlines;
     rnu::thread_pool pool;
-    auto const glyphs = text_set(fnt, L"Welch fieser Fön mit Spaß\n僕の部屋は元気でした\nя люблю яблока\nooihiouguzifzut oiuzg iuozgf\nig ouz uoguzfgiuozgouzfizutfg iutz  fgizutf\nujigzhf zutu  uiz guzt fziutf izu", size, { 40, 800 });
-    set_outlines.resize(glyphs.size());
-    for (size_t i = 0; i < glyphs.size(); ++i)
+
+    //auto const glyphs = text_set(fnt, wstr,
+    //  size, { 40, 800 });
+    //set_outlines.resize(glyphs.size());
+
+    //for (size_t i = 0; i < glyphs.size(); ++i)
+    //{
+    //  set_outlines[i] = pool.run_async([&, i]() -> std::pair<goop::set_glyph, std::vector<goop::lines::line>> {
+    //    return std::pair(glyphs[i], load_letter(glyphs[i].glyph));
+    //    });
+    //}
+
+    std::vector<goop::rect> recs;
+    recs.reserve(fnt.num_glyphs());
+    std::vector<goop::glyph_id> glyphs;
+    glyphs.reserve(fnt.num_glyphs());
+    //std::vector<std::pair<goop::set_glyph, std::vector<goop::lines::line>>> gyyL;
+
+    int const pad = 2;
+
+    //glyphs.push_back(goop::glyph_id::missing);
+    //auto rec = fnt.get_rect(goop::glyph_id::missing);
+    //rec.size *= scale;
+    //rec.size += 2 * pad;
+    //rec.position *= scale;
+    //recs.push_back(rec);
+
+    for (int x = 1; x <= 65535; ++x)
     {
-      set_outlines[i] = pool.run_async([&, i]() -> std::pair<goop::set_glyph, std::vector<goop::lines::line>> {
-        return std::pair(glyphs[i], load_letter(glyphs[i].glyph));
+      auto const gly = fnt.glyph(x);
+      if (gly == goop::glyph_id::missing)
+        continue;
+      glyphs.push_back(gly);
+      auto rec = fnt.get_rect(gly);
+
+      float const sc = scale;
+
+      rec.size *= sc;
+      rec.size += 2 * pad;
+      rec.position *= sc;
+      recs.push_back(rec);
+    }
+    std::vector<goop::rect> old_recs = recs;
+
+
+    std::vector<goop::rect> poof = recs;
+
+    for (auto& r : poof)
+    {
+      r.size.x = ceilf(r.size.x);
+      r.size.y = ceilf(r.size.y);
+      r.position.x = floorf(r.position.x);
+      r.position.y = floorf(r.position.y);
+    }
+    int iw = 2048;
+    goop::skyline_bestfit_packer skyline;
+    int ih = skyline.pack(poof, iw) + 1;
+
+
+
+    //goop::split_tree tree(1024, 4096);
+    //std::ranges::sort(poof, [](auto const& r1, auto const& r2) { return r1.size.y > r2.size.y; });
+    //for (auto& r : poof)
+    //  tree.append(r);
+
+    /*goop::rect_pack packer;
+    int ih = packer.int_pack(recs, iw, 16000) + 1;*/
+    std::vector<std::uint8_t> img(iw * ih);
+
+    auto const conc = pool.concurrency();
+    std::vector<std::future<void>> futs(conc);
+
+    for (int n = 0; n < conc; ++n)
+    {
+      futs[n] = pool.run_async([&, n] {
+        for (int i = n; i < poof.size(); i += conc)
+        {
+          goop::rect ree = poof[i];
+          auto const gly = glyphs[i];
+          auto const& l = load_letter(gly);
+          emplace(l, poof[i], scale, 0, 2, img, iw, ih, 0, 0, -poof[i].position + old_recs[i].position - rnu::vec2(pad, pad));
+        }
         });
     }
 
-    for (auto& fut : set_outlines)
-    {
-      auto const [set, outline] = fut.get();
-      emplace(outline, set.bounds, scale, 2, rad, img, iw, ih, set.offset.x, set.offset.y);
-    }
+    for (auto& f : futs) f.get();
 
     stbi_write_png("../../../../../result.png", iw, ih, 1, img.data(), 0);
   }
