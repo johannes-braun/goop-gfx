@@ -230,12 +230,6 @@ namespace goop
     data_variant _file_data;
   };
 
-  struct rect
-  {
-    rnu::vec2 position;
-    rnu::vec2 size;
-  };
-
   struct line
   {
     rnu::vec2 start;
@@ -294,7 +288,7 @@ namespace goop
     std::size_t num_glyphs() const;
     
     template<typename Func>
-    void outline(glyph_id glyph, rect& bounds, Func&& func) const
+    void outline(glyph_id glyph, rnu::rect2f& bounds, Func&& func) const
     {
       outline_impl(glyph, bounds, [](void* u, outline_segment s) {
         std::invoke(*static_cast<std::decay_t<Func>*>(u), s); 
@@ -306,7 +300,7 @@ namespace goop
     float descent() const;
     std::pair<float, float> advance_bearing(glyph_id current) const;
 
-    rect get_rect(glyph_id glyph) const;
+    rnu::rect2f get_rect(glyph_id glyph) const;
 
     std::optional<font_feature_info> query_feature(font_feature_type type, font_script script, font_language language, font_feature feature) const;
     std::optional<font_feature_info> query_feature(font_feature_type type, font_language language, font_feature feature) const;
@@ -329,8 +323,8 @@ namespace goop
     using contour_buffer = stack_buffer<contour_point, max_expected_num_points>;
     using end_point_buffer = stack_buffer<std::uint16_t, max_expected_num_contours>;
 
-    void outline_impl(glyph_id glyph, rect& bounds, void(*emit_segment)(void*, outline_segment), void* user_ptr) const;
-    void outline_impl(glyph_id glyph, contour_buffer& contours, end_point_buffer& end_points, rect* bounds) const;
+    void outline_impl(glyph_id glyph, rnu::rect2f& bounds, void(*emit_segment)(void*, outline_segment), void* user_ptr) const;
+    void outline_impl(glyph_id glyph, contour_buffer& contours, end_point_buffer& end_points, rnu::rect2f* bounds) const;
     
     font_accessor _accessor;
   };

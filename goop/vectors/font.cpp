@@ -1201,7 +1201,7 @@ namespace goop
 
   std::optional<font_feature_info> font::query_feature(font_feature_type type, font_feature feature) const
   {
-    return query_feature(type, font_language::lang_default, feature);
+    return query_feature(type, font_language::lang_german, feature);
   }
 
   std::optional<font_feature_info> font::query_feature(font_feature_type type, font_script script, font_language language, font_feature feature) const
@@ -1308,7 +1308,7 @@ namespace goop
     return _accessor.descent();
   }
 
-  rect font::get_rect(glyph_id glyph) const
+  rnu::rect2f font::get_rect(glyph_id glyph) const
   {
     auto const os = _accessor.glyph_offset_size_bytes(glyph);
     if (os.size == 0)
@@ -1322,7 +1322,7 @@ namespace goop
     std::int16_t const y_min = reader.r_u16();
     std::int16_t const x_max = reader.r_u16();
     std::int16_t const y_max = reader.r_u16();
-    rect bounds;
+    rnu::rect2f bounds;
     bounds.position.x = x_min;
     bounds.position.y = y_min;
     bounds.size.x = x_max - x_min;
@@ -1415,7 +1415,7 @@ namespace goop
     std::array<T, Size> _buffer{};
   };
 
-  void font::outline_impl(glyph_id glyph, contour_buffer& contours, end_point_buffer& end_points, rect* bounds) const
+  void font::outline_impl(glyph_id glyph, contour_buffer& contours, end_point_buffer& end_points, rnu::rect2f* bounds) const
   {
     auto const os = _accessor.glyph_offset_size_bytes(glyph);
     if (os.size == 0)
@@ -1591,7 +1591,7 @@ namespace goop
         size_t const pos = reader.position();
 
         auto const shape_begin = contours.size();
-        rect unused_rect;
+        rnu::rect2f unused_rect;
         outline_impl(glyph_id{ index_of_component }, contours, end_points, &unused_rect);
         auto const shape_end = contours.size();
 
@@ -1635,7 +1635,7 @@ namespace goop
     }
   }
 
-  void font::outline_impl(glyph_id glyph, rect& bounds, void(*emit_segment)(void*, outline_segment), void* user_ptr) const
+  void font::outline_impl(glyph_id glyph, rnu::rect2f& bounds, void(*emit_segment)(void*, outline_segment), void* user_ptr) const
   {
     contour_buffer prealloc_contour_buffer;
     end_point_buffer end_points;

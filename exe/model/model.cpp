@@ -17,6 +17,9 @@
 #include <rnu/thread_pool.hpp>
 #include <map>
 #include <vectors/font.hpp>
+#include <rnu/utility.hpp>
+#include <vectors/skyline_packer.hpp>
+#include <vectors/character_ranges.hpp>
 
 //#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
@@ -279,205 +282,15 @@ rnu::shared_entity load_gltf_as_entity(std::filesystem::path const& path, rnu::e
   return skeleton;
 }
 
-rnu::vec3 projection(rnu::vec3 r, rnu::vec3 d)
-{
-  return d - dot(d, r) * r;
-}
-
-void swing_twist_decomposition(rnu::quat const& rotation,
-  const rnu::vec3& direction,
-  rnu::quat& swing,
-  rnu::quat& twist)
-{
-  rnu::vec3 ra(rotation.x, rotation.y, rotation.z); // rotation axis
-  rnu::vec3 p = projection(direction, ra); // return projection v1 on to v2  (parallel component)
-  rnu::vec4 n(rotation.w, p.x, p.y, p.z);
-  n = normalize(n);
-  twist = { n.r, n.g, n.b, n.a };
-  swing = rotation * conj(twist);
-}
 
 #include <vectors/vectors.hpp>
 #include <vectors/distance.hpp>
 #include <vectors/lines.hpp>
 
-std::vector<goop::lines::line> subsampled_shape(goop::vector_image const& image, float base_subsampling)
+template<goop::lines::line_segment_sequence T, typename Data>
+void emplace(T&& polygon, rnu::rect2f const& r, float scale, int padding, float sdfw, std::vector<Data>& img, int iw, int ih, int x, int y, rnu::vec2 voff = { 0,0 })
 {
-  struct path_visitor
-  {
-    std::vector<goop::lines::line> segments;
-    rnu::vec2d cursor{ 0, 0 };
-    bool relative = false;
-    float base_subsampling;
-    rnu::vec2 last_curve_control;
-    rnu::vec2 last_move_target;
-
-    rnu::vec2d offset() const {
-      return relative ? cursor : rnu::vec2d(0, 0);
-    }
-
-    void operator()(goop::line_data_t const& data) {
-      segments.push_back({ .start = cursor, .end = data.value + offset() });
-    }
-
-    void operator()(goop::vertical_data_t const& data) {
-      auto end = cursor;
-      end.y = offset().y + data.value;
-      segments.push_back({ .start = cursor, .end = end });
-    }
-
-    void operator()(goop::horizontal_data_t const& data) {
-      auto end = cursor;
-      end.x = offset().x + data.value;
-      segments.push_back({ .start = cursor, .end = end });
-    }
-
-    void operator()(goop::smooth_quad_bezier_data_t const& data)
-    {
-      auto to_last = last_curve_control - cursor;
-      auto next = cursor - to_last;
-
-      auto const off = offset();
-      goop::lines::bezier curve{
-        .start = cursor,
-        .control = next,
-        .end = {off.x + data.value.x, off.y + data.value.y}
-      };
-      last_curve_control = curve.control;
-      goop::lines::subsample(curve, base_subsampling, segments);
-    }
-
-    void operator()(goop::smooth_curve_to_data_t const& data)
-    {
-      auto to_last = last_curve_control - cursor;
-      auto next = cursor - to_last;
-
-      auto const off = offset();
-      goop::lines::curve curve{
-        .start = cursor,
-        .control_start = next,
-        .control_end = {off.x + data.x2, off.y + data.y2},
-        .end = {off.x + data.x, off.y + data.y}
-      };
-      last_curve_control = curve.control_end;
-      goop::lines::subsample(curve, base_subsampling, segments);
-    }
-
-    void operator()(goop::quad_bezier_data_t const& data)
-    {
-      auto const off = offset();
-      goop::lines::bezier curve{
-        .start = cursor,
-        .control = {off.x + data.x1, off.y + data.y1},
-        .end = {off.x + data.x, off.y + data.y}
-      };
-      last_curve_control = curve.control;
-      goop::lines::subsample(curve, base_subsampling, segments);
-    }
-
-    void operator()(goop::curve_to_data_t const& data)
-    {
-      auto const off = offset();
-      goop::lines::curve curve{
-        .start = cursor,
-        .control_start = {off.x + data.x1, off.y + data.y1},
-        .control_end = {off.x + data.x2, off.y + data.y2},
-        .end = {off.x + data.x, off.y + data.y}
-      };
-      last_curve_control = curve.control_end;
-      goop::lines::subsample(curve, base_subsampling, segments);
-    }
-
-    void operator()(goop::arc_data_t const& data)
-    {
-      auto const off = offset();
-      goop::lines::arc curve{
-        .start = cursor,
-        .radii = {data.rx, data.ry},
-        .end = {off.x + data.x, off.y + data.y},
-        .rotation = float(data.x_axis_rotation),
-        .large_arc = data.large_arc_flag != 0,
-        .sweep = data.sweep_flag != 0
-      };
-      goop::lines::subsample(curve, base_subsampling, segments);
-    }
-
-    void operator()(goop::close_data_t const& close)
-    {
-      segments.push_back({ .start = cursor, .end = last_move_target });
-    }
-
-    void operator()(goop::move_data_t const& move)
-    {
-      last_move_target = move.value + offset();
-    }
-  } visitor;
-  visitor.base_subsampling = base_subsampling;
-
-  for (auto const& seg : image.path())
-  {
-    visitor.relative = is_relative(seg.type);
-    goop::visit(seg, visitor);
-    goop::move_cursor(seg, visitor.cursor);
-  }
-
-  return visitor.segments;
-}
-float minimum_distance(rnu::vec2 v, rnu::vec2 w, rnu::vec2 p) {
-  // Return minimum distance between line segment vw and point p
-  auto const diff = w - v;
-  const float l2 = dot(diff, diff);  // i.e. |w-v|^2 -  avoid a sqrt
-  if (l2 == 0.0) return rnu::norm(p - v);   // v == w case
-  // Consider the line extending the segment, parameterized as v + t (w - v).
-  // We find projection of point p onto the line. 
-  // It falls where t = [(p-v) . (w-v)] / |w-v|^2
-  // We clamp t from [0,1] to handle points outside the segment vw.
-  const float t = rnu::max(0, rnu::min(1, dot(p - v, w - v) / l2));
-  const rnu::vec2 projection = v + t * (w - v);  // Projection falls on the segment
-  return rnu::norm(p - projection);
-}
-
-int const scanline_test(rnu::vec2 a, rnu::vec2 b, rnu::vec2 r)
-{
-  auto const s = b - a;
-  auto const n = rnu::vec2(-s.y, s.x);
-  auto const k = a - r;
-  auto const t = (-k.y) / (s.y);
-
-  auto const cross = [](auto x, auto y) { return x.x * y.y - x.y * y.x; };
-  auto const u = (cross(k, s)) / s.y;
-
-  bool const intersects = u > 0 && t >= 0 && t <= 1;
-
-  if (!intersects)
-    return 0;
-
-  return rnu::sign(dot(n, k));
-}
-
-float signed_distance(std::vector<goop::lines::line> const& polygon, rnu::vec2 point)
-{
-  float dmin = std::numeric_limits<float>::max();
-  int intersections = 0;
-
-  for (auto const& line : polygon)
-  {
-    auto const f = fmodf(point.y, 1.0f);
-    if (f == 0)
-      point.y += 1e-3f;
-
-    auto const d = minimum_distance(line.start, line.end, point);
-    intersections += scanline_test(line.start, line.end, point);
-
-    if (abs(d) < abs(dmin))
-      dmin = d;
-  }
-  return (intersections == 0 ? 1 : -1) * dmin;
-}
-
-void emplace(std::vector<goop::lines::line> const& polygon, goop::rect const& r, float scale, int padding, float sdfw, std::vector<std::uint8_t>& img, int iw, int ih, int x, int y, rnu::vec2 voff = { 0,0 })
-{
-  auto const at = [&](int x, int y) -> std::uint8_t& { return img[x + y * iw]; };
+  auto const at = [&](int x, int y) -> Data& { return img[x + y * iw]; };
 
   //float const w = r.max.x - r.min.x + padding * 2;
   //float const h = r.max.y - r.min.y + padding * 2;
@@ -490,387 +303,509 @@ void emplace(std::vector<goop::lines::line> const& polygon, goop::rect const& r,
   {
     for (int j = min_y; j <= max_y; ++j)
     {
-      auto const signed_distance = ::signed_distance(polygon, { (i + voff.x) / scale, (j + voff.y) / scale }) * scale;
+      auto const signed_distance = goop::lines::signed_distance(polygon, { (i + voff.x) / scale, (j + voff.y) / scale }) * scale;
       auto min = -sdfw;
       auto max = sdfw;
 
       auto const iix = x + i;
       auto const iiy = y + j;
 
-      at(iix, iiy) = std::max<float>(at(iix, iiy), (1 - std::clamp((signed_distance - min) / (max - min), 0.0f, 1.0f)) * 255);
+      at(iix, iiy) = Data(
+        (1 - std::clamp((signed_distance - min) / (max - min), 0.0f, 1.0f)) * 255
+      );
     }
   }
 }
-
 namespace goop
 {
-  struct set_glyph
-  {
-    glyph_id glyph;
-    rnu::vec2 offset;
-    rect bounds;
-  };
-
-  std::optional<glyph_id> ligature(goop::font const& font, goop::font_feature_info const& lig_feature, std::span<goop::glyph_id const> glyphs)
-  {
-    auto const feat_result = font.lookup_substitution(lig_feature, glyphs);
-    if (!feat_result)
-      return std::nullopt;
-
-    auto const count = font.substitution_count(*feat_result);
-    if (count != 1)
-      return std::nullopt;
-
-    return font.substitution_glyph(*feat_result, 0);
-  }
-
-  std::vector<set_glyph> text_set(goop::font const& font, std::wstring_view str, float const em_size, rnu::vec2 cursor)
-  {
-    auto ligature_feature = font.query_feature(goop::font_feature_type::substitution, goop::font_feature::ft_liga);
-    auto kerning_feature = font.query_feature(goop::font_feature_type::positioning, goop::font_feature::ft_kern);
-
-    thread_local static std::vector<std::vector<goop::glyph_id>> glyph_lines;
-    glyph_lines.clear();
-    glyph_lines.emplace_back();
-    for (auto& c : str)
-    {
-      if (c == '\n')
-      {
-        glyph_lines.emplace_back();
-        continue;
-      }
-      glyph_lines.back().push_back(font.glyph(c));
-    }
-
-    bool has_substituted = true;
-    auto const font_scale = em_size / font.units_per_em();
-
-    while (has_substituted)
-    {
-      has_substituted = false;
-      for (auto& glyphs : glyph_lines)
-      {
-        for (int i = 0; i < glyphs.size() - 1; ++i)
-        {
-          auto const second = glyphs.size() - 1 - i;
-          auto const first = second - 1;
-
-          auto sub = (i < glyphs.size() - 2) && ligature_feature ? ligature(font, *ligature_feature, std::array{ glyphs[first - 1], glyphs[first], glyphs[second] }) : std::nullopt;
-          if (!sub && ligature_feature)
-            sub = ligature(font, *ligature_feature, std::array{ glyphs[first], glyphs[second] });
-          if (sub)
-          {
-            has_substituted = true;
-            glyphs[first] = *sub;
-            glyphs.erase(glyphs.begin() + second);
-          }
-        }
-      }
-    }
-
-    std::vector<set_glyph> set_glyphs(std::accumulate(begin(glyph_lines), end(glyph_lines), 0ull, [](auto const& val, auto& v) { return val + v.size(); }));
-
-    auto const basey = 40;
-    auto const rad = 0.5f;
-
-    int base_i = 0;
-    float base_x = cursor.x;
-    for (auto const& glyphs : glyph_lines)
-    {
-      for (int i = 0; i < glyphs.size(); ++i)
-      {
-        auto const gly = glyphs[i];
-        auto& result = set_glyphs[base_i + i];
-        result.glyph = gly;
-        auto const rec = font.get_rect(gly);
-
-        auto const next_glyph = i < glyphs.size() - 1 ? glyphs[i + 1] : goop::glyph_id{ 0 };
-
-        auto const kerning = !kerning_feature ? std::nullopt : font.lookup_positioning(*kerning_feature, std::array{ gly, next_glyph });
-
-        auto const kerning_values = !kerning ? nullptr : std::get_if<font_accessor::pair_value_feature>(&*kerning);
-
-        auto [ad1, be1] = font.advance_bearing(gly);
-
-        if (kerning_values)
-        {
-          ad1 += kerning_values->first.x_advance;
-          be1 += kerning_values->first.x_placement;
-        }
-
-        result.bounds = rec;
-        result.bounds.position *= font_scale;
-        result.bounds.size *= font_scale;
-        result.offset = cursor + rnu::vec2(be1 * font_scale, 0);
-
-        cursor.x += ad1 * font_scale;
-      }
-      base_i += glyphs.size();
-      cursor.x = base_x;
-      cursor.y -= (font.ascent() - font.descent()) * font_scale;
-    }
-
-    return set_glyphs;
-  }
-
-  //struct splitter
-  //{
-  //  rect rectangle;
-
-  //  std::optional<rect> possible_right;
-  //  std::optional<rect> possible_bottom;
-
-  //  std::size_t parent;
-  //  std::size_t child_right = 0;
-  //  std::size_t child_bottom = 0;
-  //};
-
-  //class split_tree
-  //{
-  //public:
-  //  split_tree(int w, int h)
-  //  {
-  //    auto& r = _splits.emplace_back();
-  //    r.rectangle.position = { 0, 0 };
-  //    r.rectangle.size = { w, h };
-  //  }
-
-  //  void append(rect& r)
-  //  {
-  //    // r is sorted by height.
-  //    // 1) find rightmost node
-  //    // 2) if fits: emplace
-  //    //    else: go to parent and try 2) again.
-
-  //    auto node = rightmost(0);
-  //    append_at(node, r);
-  //  }
-
-  //private:
-  //  void append_at(std::size_t node, rect& r)
-  //  {
-
-  //    if (at(node).possible_right && fits(r, at(node).possible_right.value()))
-  //    {
-  //      resolve_as_right(node);
-  //      emplace_at(at(node).child_right, r);
-  //    }
-  //    else if (at(node).possible_bottom && fits(r, at(node).possible_bottom.value()))
-  //    {
-  //      resolve_as_bottom(node);
-  //      emplace_at(at(node).child_bottom, r);
-  //    }
-  //    else if (at(node).child_right == 0 && at(node).child_bottom == 0 && fits(r, at(node).rectangle))
-  //    {
-  //      emplace_at(node, r);
-  //    }
-  //    else
-  //    {
-  //      resolve_as_leaf(node);
-  //      append_at(shuffle_up(node), r);
-  //    }
-  //  }
-
-  //  void resolve_as_leaf(std::size_t i)
-  //  {
-  //  }
-  //  void resolve_as_right(std::size_t i)
-  //  {
-  //    at(i).child_right = _splits.size();
-  //    at(i).child_bottom = _splits.size() + 1;
-
-  //    auto& right = _splits.emplace_back();
-  //    right.parent = i;
-  //    right.rectangle = at(i).possible_right.value();
-  //    auto& bottom = _splits.emplace_back();
-  //    bottom.parent = i;
-  //    bottom.rectangle = at(i).possible_bottom.value();
-
-  //    at(i).possible_right = std::nullopt;
-  //    at(i).possible_bottom = std::nullopt;
-  //  }
-  //  void resolve_as_bottom(std::size_t i)
-  //  {
-  //    at(i).child_right = _splits.size();
-  //    at(i).child_bottom = _splits.size() + 1;
-
-  //    auto& right = _splits.emplace_back();
-  //    auto& bottom = _splits.emplace_back();
-
-  //    right.parent = i;
-  //    right.rectangle = at(i).possible_right.value();
-  //    right.rectangle.size.y -= at(i).possible_bottom.value().size.y;
-  //    bottom.parent = i;
-  //    bottom.rectangle = at(i).possible_bottom.value();
-
-  //    at(i).possible_right = std::nullopt;
-  //    at(i).possible_bottom = std::nullopt;
-  //  }
-
-  //  bool fits(rect const& r, rect const& other)
-  //  {
-  //    return r.size <= other.size;
-  //  }
-
-  //  splitter& at(std::size_t pos)
-  //  {
-  //    return _splits[pos];
-  //  }
-  //  splitter const& at(std::size_t pos) const
-  //  {
-  //    return _splits[pos];
-  //  }
-
-  //  std::size_t shuffle_up(std::size_t base) const
-  //  {
-  //    // go to parent and then its bottom child
-  //    auto& p = at(at(base).parent);
-
-  //    if (p.child_right == base)
-  //      return rightmost(p.child_bottom);
-  //    else
-  //      return rightmost(at(p.parent).child_bottom);
-
-  //    //return at(at(base).parent).child_bottom;
-  //  }
-
-  //  std::size_t rightmost(std::size_t src) const
-  //  {
-  //    std::size_t node = src;
-  //    while (at(node).child_right != 0)
-  //      node = at(node).child_right;
-  //    return node;
-  //  }
-
-  //  void emplace_at(std::size_t index, rect& r)
-  //  {
-  //    r.position = at(index).rectangle.position;
-
-  //    auto full_rect_right = at(index).rectangle;
-  //    full_rect_right.position.x += r.size.x;
-  //    full_rect_right.size.x -= r.size.x;
-
-  //    auto full_rect_bottom = at(index).rectangle;
-  //    full_rect_bottom.position.y += r.size.y;
-  //    full_rect_bottom.size.y -= r.size.y;
-
-  //    _splits[index].rectangle = r;
-  //    _splits[index].possible_right = full_rect_right;
-  //    _splits[index].possible_bottom = full_rect_bottom;
-  //  }
-
-  //  std::vector<splitter> _splits;
-  //};
-
-
-
-  class skyline_packer
+  class sdf_font_atlas
   {
   public:
-    int pack(std::span<rect> rectangles, int width)
+    sdf_font_atlas(int atlas_width, float base_size, float sdf_width, goop::font font, std::span<std::pair<char16_t, char16_t> const> unicode_ranges)
+      : _font(std::move(font)), _base_size{ base_size }, _sdf_width{sdf_width}, _width(atlas_width)
     {
-      std::vector<std::size_t> indices(rectangles.size());
-      std::iota(begin(indices), end(indices), 0ull);
+      std::vector<rnu::rect2f> bounds;
+      std::vector<glyph_info> infos;
+      auto const scale = base_size / font.units_per_em();
 
-      std::ranges::sort(indices, [&](std::size_t a, std::size_t b) {  return rectangles[a].size.y > rectangles[b].size.y; });
-
-      for (auto& r : rectangles)
+      for (auto p : unicode_ranges)
       {
-        r.size.x = std::ceilf(r.size.x);
-        r.size.y = std::ceilf(r.size.y);
-        r.position.x = std::floorf(r.position.x);
-        r.position.y = std::floorf(r.position.y);
-      }
-
-      _nodes.push_back(node{ 0, 0, (width) });
-
-      int result_height = 0;
-      for (auto index : indices)
-      {
-        rect& r = rectangles[index];
-
-        auto best_iter = _nodes.end();
-        int best_num_nodes = 0;
-        int best_width = std::numeric_limits<int>::max();
-        int best_y = std::numeric_limits<int>::max();
-
-        for (auto iter = _nodes.begin(); iter != _nodes.end(); ++iter)
+        for (char16_t x = p.first; x <= p.second; ++x)
         {
-          if (iter->y > best_y)
+          auto const gly = _font.glyph(x);
+          if (gly == goop::glyph_id::missing)
             continue;
 
-          int full_width = iter->width;
-          auto next = std::next(iter);
-          int y = iter->y;
-          int nodes = 1;
+          auto r = _font.get_rect(gly);
+          r.size *= scale;
+          r.size += 2 * sdf_width;
+          r.position *= scale;
 
-          while (full_width <= r.size.x && next != _nodes.end())
-          {
-            full_width += next->width;
-            y = std::max(next->y, y);
-            nodes++;
-            next = std::next(next);
-          }
+          auto const defb = r;
 
-          if (full_width < r.size.x)
-            break;
+          r.size.x = std::ceilf(r.position.x + r.size.x) - r.position.x;
+          r.size.y = std::ceilf(r.position.y + r.size.y) - r.position.y;
+          r.position.x = std::floorf(r.position.x);
+          r.position.y = std::floorf(r.position.y);
 
-          if (best_y > y)
-          {
-            best_y = y;
-            best_width = full_width;
-            best_iter = iter;
-            best_num_nodes = nodes;
-          }
+          rnu::rect2f const err{
+            .position = r.position - defb.position,
+            .size = r.size - defb.size
+          };
+
+          bounds.push_back(std::move(r));
+          infos.push_back(glyph_info{ x, gly, scale, defb, r, err });
         }
-
-        r.position.x = best_iter->x;
-        r.position.y = best_y;
-
-        result_height = std::max<int>(result_height, r.position.y + r.size.y);
-
-        node new_node;
-        new_node.x = best_iter->x;
-        new_node.y = best_y + r.size.y;
-        new_node.width = r.size.x;
-
-        auto const last_elem = std::next(best_iter, best_num_nodes - 1);
-
-        node new_next_node;
-        new_next_node.x = best_iter->x + r.size.x;
-        new_next_node.y = last_elem->y;
-        new_next_node.width = best_width - new_node.width;
-
-        auto const pos = _nodes.erase(best_iter, std::next(last_elem));
-        if (new_next_node.width != 0 && new_node.width != 0)
-          _nodes.insert(pos, { new_node, new_next_node });
-        else if (new_next_node.width == 0 && new_node.width != 0)
-          _nodes.insert(pos, new_node);
-        else if (new_next_node.width != 0 && new_node.width == 0)
-          _nodes.insert(pos, new_next_node);
-
       }
 
-      return result_height + 1;
+      goop::skyline_packer skyline;
+      _height = skyline.pack(bounds, _width);
+
+      for (int i=0; i<infos.size(); ++i)
+      {
+        auto info = infos[i];
+        info.packed_bounds = bounds[i];
+        _infos[info.id] = info;
+      }
+    }
+
+    void dump(std::vector<std::uint8_t>& image, int& w, int& h)
+    {
+      w = _width;
+      h = _height + 1;
+      image.resize(w * h);
+
+      std::mutex image_mutex;
+        
+      std::for_each(std::execution::par_unseq, begin(_infos), end(_infos), [this, w, h, &image, &image_mutex](std::pair<glyph_id, glyph_info> const& pair) {
+
+        auto const& [ch, info] = pair;
+        auto const& [character, id, scale, db, pb, err] = info;
+        auto const& outline = load_glyph(pair.second.id);
+
+        auto const at = [&](int x, int y) -> std::uint8_t& { return image[x + y * w]; };
+
+        //float const w = r.max.x - r.min.x + padding * 2;
+        //float const h = r.max.y - r.min.y + padding * 2;
+        auto const min_x = pb.position.x;
+        auto const min_y = pb.position.y;
+        auto const max_x = pb.position.x + pb.size.x;
+        auto const max_y = pb.position.y + pb.size.y;
+
+        auto const voff = -pb.position + db.position + err.position - rnu::vec2(_sdf_width, _sdf_width);
+
+        std::unique_lock lock(image_mutex);
+        for (int i = min_x; i <= max_x; ++i)
+        {
+          for (int j = min_y; j <= max_y; ++j)
+          {
+            auto const signed_distance = goop::lines::signed_distance(outline, { (i + voff.x) / scale, (j + voff.y) / scale }) * scale;
+            auto min = -_sdf_width;
+            auto max = _sdf_width;
+
+            auto const iix = 0 + i;
+            auto const iiy = 0 + j;
+
+            at(iix, iiy) = std::uint8_t(
+              (1 - std::clamp((signed_distance - min) / (max - min), 0.0f, 1.0f)) * 255
+            );
+          }
+        }
+        });
     }
 
   private:
-    struct node
+    std::vector<goop::lines::line> const& load_glyph(glyph_id glyph)
     {
-      int x;
-      int y;
-      int width;
+      static thread_local std::vector<goop::outline_segment> outline;
+      outline.clear();
+      static thread_local std::vector<goop::lines::line> letter;
+      letter.clear();
+
+      rnu::rect2f bounds;
+      struct
+      {
+        void operator()(goop::line const& line)
+        {
+          goop::lines::subsample(goop::lines::line{
+            .start = line.start,
+            .end = line.end
+            }, 3, letter);
+        }
+        void operator()(goop::bezier const& line)
+        {
+          goop::lines::subsample(goop::lines::bezier{
+            .start = line.start,
+            .control = line.control,
+            .end = line.end
+            }, 3, letter);
+        }
+      } visitor;
+
+      _font.outline(glyph, bounds, [&](goop::outline_segment const& o) { std::visit(visitor, o); });
+
+      return letter;
+    }
+
+    std::optional<glyph_id> ligature(goop::font const& font, goop::font_feature_info const& lig_feature, std::span<goop::glyph_id const> glyphs)
+    {
+      auto const feat_result = font.lookup_substitution(lig_feature, glyphs);
+      if (!feat_result)
+        return std::nullopt;
+
+      auto const count = font.substitution_count(*feat_result);
+      if (count != 1)
+        return std::nullopt;
+
+      return font.substitution_glyph(*feat_result, 0);
+    }
+
+  public:
+    struct set_glyph_t
+    {
+      glyph_id glyph;
+      rnu::rect2f bounds;
+      rnu::rect2f uvs;
     };
 
-    std::vector<node> _nodes;
+    std::vector<set_glyph_t> text_set(std::wstring_view str, float const em_size, rnu::vec2 cursor)
+    {
+      auto ligature_feature = _font.query_feature(goop::font_feature_type::substitution, goop::font_script::scr_latin, goop::font_language::lang_default, goop::font_feature::ft_liga);
+      auto kerning_feature = _font.query_feature(goop::font_feature_type::positioning, goop::font_script::scr_latin, goop::font_language::lang_default, goop::font_feature::ft_kern);
+
+
+      thread_local static std::vector<std::vector<goop::glyph_id>> glyph_lines;
+      glyph_lines.clear();
+      glyph_lines.emplace_back();
+      for (auto& c : str)
+      {
+        if (c == '\n')
+        {
+          glyph_lines.emplace_back();
+          continue;
+        }
+        glyph_lines.back().push_back(_font.glyph(c));
+      }
+
+      bool has_substituted = true;
+      auto const font_scale = em_size / _font.units_per_em();
+
+      while (has_substituted)
+      {
+        has_substituted = false;
+        for (auto& glyphs : glyph_lines)
+        {
+          for (int i = 0; i < glyphs.size() - 1; ++i)
+          {
+            auto const second = glyphs.size() - 1 - i;
+            auto const first = second - 1;
+
+            auto sub = (i < glyphs.size() - 2) && ligature_feature ? ligature(_font, *ligature_feature, std::array{ glyphs[first - 1], glyphs[first], glyphs[second] }) : std::nullopt;
+            if (!sub && ligature_feature)
+              sub = ligature(_font, *ligature_feature, std::array{ glyphs[first], glyphs[second] });
+            if (sub)
+            {
+              has_substituted = true;
+              glyphs[first] = *sub;
+              glyphs.erase(glyphs.begin() + second);
+            }
+          }
+        }
+      }
+
+      std::vector<set_glyph_t> set_glyphs(std::accumulate(begin(glyph_lines), end(glyph_lines), 0ull, [](auto const& val, auto& v) { return val + v.size(); }));
+
+      auto const basey = 40;
+      auto const rad = 0.5f;
+
+      int base_i = 0;
+      float base_x = cursor.x;
+      for (auto const& glyphs : glyph_lines)
+      {
+        for (int i = 0; i < glyphs.size(); ++i)
+        {
+          auto const gly = glyphs[i];
+          auto& result = set_glyphs[base_i + i];
+          result.glyph = gly;
+          auto const rec = _font.get_rect(gly);
+
+          auto const next_glyph = i < glyphs.size() - 1 ? glyphs[i + 1] : goop::glyph_id::missing;
+
+          auto const kerning = !kerning_feature ? std::nullopt : _font.lookup_positioning(*kerning_feature, std::array{ gly, next_glyph });
+
+          auto const kerning_values = !kerning ? nullptr : std::get_if<font_accessor::pair_value_feature>(&*kerning);
+
+          auto [ad1, be1] = _font.advance_bearing(gly);
+
+          // Kerning somewhat broken in Roboto-Regular between K and r
+          /*if (kerning_values)
+          {
+            ad1 += kerning_values->first.x_advance;
+            be1 += kerning_values->first.x_placement;
+          }*/
+
+          auto const& info = _infos[gly];
+          auto const factor = (em_size / _base_size);
+
+          result.bounds.size = rec.size * font_scale;
+          result.bounds.position = cursor + rnu::vec2((be1 + rec.position.x) * font_scale, rec.position.y * font_scale);
+          //result.bounds.position += info.error.position * factor;
+          result.bounds.position -= _sdf_width * factor;
+          //result.bounds.size += info.error.size * factor;
+          result.bounds.size += 2*_sdf_width * factor;
+
+          auto const scale_by = 1.0 / rnu::vec2(_width, _height);
+          result.uvs = info.packed_bounds;
+          result.uvs.position -= info.error.position;
+          result.uvs.size -= info.error.size;
+          result.uvs.position *= scale_by;
+          result.uvs.size *= scale_by;
+
+          cursor.x += ad1 * font_scale;
+        }
+        base_i += glyphs.size();
+        cursor.x = base_x;
+        cursor.y -= (_font.ascent() - _font.descent()) * font_scale;
+      }
+
+      return set_glyphs;
+    }
+
+  private:
+    struct glyph_info
+    {
+      char16_t character;
+      goop::glyph_id id;
+      float scale;
+      rnu::rect2f default_bounds;
+      rnu::rect2f packed_bounds;
+
+      rnu::rect2f error;
+    };
+
+    goop::font _font;
+    float _base_size = 0;
+    float _sdf_width = 0;
+    int _width = 0;
+    int _height = 0;
+    std::unordered_map<glyph_id, glyph_info> _infos;
   };
 }
+//
+//namespace goop
+//{
+//  struct set_glyph
+//  {
+//    glyph_id glyph;
+//    rnu::vec2 offset;
+//    rnu::rect2f bounds;
+//  };
+//
+//  std::optional<glyph_id> ligature(goop::font const& font, goop::font_feature_info const& lig_feature, std::span<goop::glyph_id const> glyphs)
+//  {
+//    auto const feat_result = font.lookup_substitution(lig_feature, glyphs);
+//    if (!feat_result)
+//      return std::nullopt;
+//
+//    auto const count = font.substitution_count(*feat_result);
+//    if (count != 1)
+//      return std::nullopt;
+//
+//    return font.substitution_glyph(*feat_result, 0);
+//  }
+//
+//  std::vector<set_glyph> text_set(goop::font const& font, std::wstring_view str, float const em_size, rnu::vec2 cursor)
+//  {
+//    auto ligature_feature = font.query_feature(goop::font_feature_type::substitution, goop::font_feature::ft_liga);
+//    auto kerning_feature = font.query_feature(goop::font_feature_type::positioning, goop::font_feature::ft_kern);
+//
+//    thread_local static std::vector<std::vector<goop::glyph_id>> glyph_lines;
+//    glyph_lines.clear();
+//    glyph_lines.emplace_back();
+//    for (auto& c : str)
+//    {
+//      if (c == '\n')
+//      {
+//        glyph_lines.emplace_back();
+//        continue;
+//      }
+//      glyph_lines.back().push_back(font.glyph(c));
+//    }
+//
+//    bool has_substituted = true;
+//    auto const font_scale = em_size / font.units_per_em();
+//
+//    while (has_substituted)
+//    {
+//      has_substituted = false;
+//      for (auto& glyphs : glyph_lines)
+//      {
+//        for (int i = 0; i < glyphs.size() - 1; ++i)
+//        {
+//          auto const second = glyphs.size() - 1 - i;
+//          auto const first = second - 1;
+//
+//          auto sub = (i < glyphs.size() - 2) && ligature_feature ? ligature(font, *ligature_feature, std::array{ glyphs[first - 1], glyphs[first], glyphs[second] }) : std::nullopt;
+//          if (!sub && ligature_feature)
+//            sub = ligature(font, *ligature_feature, std::array{ glyphs[first], glyphs[second] });
+//          if (sub)
+//          {
+//            has_substituted = true;
+//            glyphs[first] = *sub;
+//            glyphs.erase(glyphs.begin() + second);
+//          }
+//        }
+//      }
+//    }
+//
+//    std::vector<set_glyph> set_glyphs(std::accumulate(begin(glyph_lines), end(glyph_lines), 0ull, [](auto const& val, auto& v) { return val + v.size(); }));
+//
+//    auto const basey = 40;
+//    auto const rad = 0.5f;
+//
+//    int base_i = 0;
+//    float base_x = cursor.x;
+//    for (auto const& glyphs : glyph_lines)
+//    {
+//      for (int i = 0; i < glyphs.size(); ++i)
+//      {
+//        auto const gly = glyphs[i];
+//        auto& result = set_glyphs[base_i + i];
+//        result.glyph = gly;
+//        auto const rec = font.get_rect(gly);
+//
+//        auto const next_glyph = i < glyphs.size() - 1 ? glyphs[i + 1] : goop::glyph_id{ 0 };
+//
+//        auto const kerning = !kerning_feature ? std::nullopt : font.lookup_positioning(*kerning_feature, std::array{ gly, next_glyph });
+//
+//        auto const kerning_values = !kerning ? nullptr : std::get_if<font_accessor::pair_value_feature>(&*kerning);
+//
+//        auto [ad1, be1] = font.advance_bearing(gly);
+//
+//        if (kerning_values)
+//        {
+//          ad1 += kerning_values->first.x_advance;
+//          be1 += kerning_values->first.x_placement;
+//        }
+//
+//        result.bounds = rec;
+//        result.bounds.position *= font_scale;
+//        result.bounds.size *= font_scale;
+//        result.offset = cursor + rnu::vec2(be1 * font_scale, 0);
+//
+//        cursor.x += ad1 * font_scale;
+//      }
+//      base_i += glyphs.size();
+//      cursor.x = base_x;
+//      cursor.y -= (font.ascent() - font.descent()) * font_scale;
+//    }
+//
+//    return set_glyphs;
+//  }
+//
+//}
 
-template<class... Ts> struct overload : Ts... { using Ts::operator()...; };
+template<typename T>
+void copy_linear(std::span<T> dst, int dw, int dh, rnu::rect2f dst_rect, std::span<T const> src, int sw, int sh, rnu::rect2f src_rect)
+{
+  if (src_rect.size.x == 0 || src_rect.size.y == 0)
+    return;
+  if (dst_rect.size.x == 0 || dst_rect.size.y == 0)
+    return;
+
+  int dst_x_minf = dst_rect.position.x * dw;
+  int dst_x_maxf = (dst_rect.position.x + dst_rect.size.x) * dw;
+  int dst_y_minf = dst_rect.position.y * dh;
+  int dst_y_maxf = (dst_rect.position.y + dst_rect.size.y) * dh;
+
+  int dst_x_min = std::floor(dst_x_minf);
+  int dst_x_max = std::ceilf(dst_x_maxf);
+  int dst_y_min = std::floor(dst_y_minf);
+  int dst_y_max = std::ceilf(dst_y_maxf);
+
+  float src_x_min = src_rect.position.x * sw;
+  float src_x_max = (src_rect.position.x + src_rect.size.x) * sw;
+  float src_y_min = src_rect.position.y * sh;
+  float src_y_max = (src_rect.position.y + src_rect.size.y) * sh;
+
+  auto const get = [&](int x, int y) -> T const& {
+    return src[x + y * sw];
+  };
+  auto const set = [&](int x, int y) -> T& {
+    return dst[x + y * dw];
+  };
+
+  for (int x = dst_x_min; x <= dst_x_max; ++x)
+  {
+    for (int y = dst_y_min; y <= dst_y_max; ++y)
+    {
+      float const fac_x = src_x_min + (src_x_max - src_x_min) * ((x-dst_x_minf) / float(dst_x_maxf - dst_x_minf));
+      auto const fract_x = std::fmodf(fac_x, 1.0f);
+      float const fac_y = src_y_min + (src_y_max - src_y_min) * ((y-dst_y_minf) / float(dst_y_maxf - dst_y_minf));
+      auto const fract_y = std::fmodf(fac_y, 1.0f);
+
+      auto const src_x_0 = int(fac_x);
+      auto const src_x_1 = src_x_0 + 1;
+      auto const src_y_0 = int(fac_y);
+      auto const src_y_1 = src_y_0 + 1;
+
+      auto const s00 = get(src_x_0, src_y_0);
+      auto const s10 = get(src_x_1, src_y_0);
+      auto const s01 = get(src_x_0, src_y_1);
+      auto const s11 = get(src_x_1, src_y_1);
+
+      auto const s0 = rnu::cx::mix<float>(s00, s10, fract_x);
+      auto const s1 = rnu::cx::mix<float>(s01, s11, fract_x);
+
+      //auto const width = (18 / 18.f) * 16.f / 255;
+
+      auto const final_value = rnu::cx::mix<float>(s0, s1, fract_y) / 255.0f;
+
+      //(signed_distance - min) / (max - min)
+
+      auto const d = -(final_value * (2 * 8.f) - 8.f) / (25.f / 14.f);
+
+      auto const factor = rnu::smoothstep(0.9, -0.1, d) * 255;
+      
+      set(x, y) = std::max<uint8_t>(set(x, y), factor);
+    }
+  }
+}
 
 int main()
 {
   goop::font fnt("../../../../../res/MPLUS1p-Regular.ttf");
+
+
+  goop::sdf_font_atlas atlas(1024, 25, 8, goop::font("../../../../../res/Roboto-Regular.ttf"), std::array{
+    goop::character_ranges::basic_latin,
+    goop::character_ranges::c1_controls_and_latin_1_supplement,
+    goop::character_ranges::latin_extended_a,
+    goop::character_ranges::latin_extended_additional,
+    goop::character_ranges::latin_extended_b,
+    goop::character_ranges::alphabetic_presentation_forms,
+    goop::character_ranges::currency_symbols,
+    });
+
+  std::vector<std::uint8_t> atlas_img;
+  int aiw, aih;
+  atlas.dump(atlas_img, aiw, aih);
+
+  stbi_write_png("../../../../../xXfontatlasXx.png", aiw, aih, 1, atlas_img.data(), 0);
+
+  std::vector<std::uint8_t> out_image(1024 * 512);
+
+  auto const set_text = atlas.text_set(L"Gefiewaltige Krater benützt man nötigst. 50% Maßschneiderung!", 18, rnu::vec2{33, 33});
+  for(auto const& set : set_text)
+  {
+    auto dst = set.bounds;
+    dst.position /= rnu::vec2(1024, 512);
+    dst.size /= rnu::vec2(1024, 512);
+
+    copy_linear<std::uint8_t>(out_image, 1024, 512, dst, atlas_img, aiw, aih, set.uvs);
+  }
+
+  stbi_write_png("../../../../../PUPI.png", 1024, 512, 1, out_image.data(), 0);
 
   auto const load_letter = [&](std::optional<goop::glyph_id> ch) -> std::vector<goop::lines::line> const& {
     static std::mutex m;
@@ -881,7 +816,7 @@ int main()
     static thread_local std::vector<goop::lines::line> letter;
     letter.clear();
 
-    goop::rect bounds;
+    rnu::rect2f bounds;
     auto const gly = *ch;
     struct
     {
@@ -890,7 +825,7 @@ int main()
         goop::lines::subsample(goop::lines::line{
           .start = line.start,
           .end = line.end
-          }, 10.f, letter);
+          }, 3, letter);
       }
       void operator()(goop::bezier const& line)
       {
@@ -898,7 +833,7 @@ int main()
           .start = line.start,
           .control = line.control,
           .end = line.end
-          }, 10.f, letter);
+          }, 3, letter);
       }
     } visitor;
 
@@ -919,15 +854,8 @@ int main()
   auto const load_svg = [](auto&& path) {
     goop::vector_image img;
     img.parse(path);
-    return subsampled_shape(img, 10);
+    return goop::lines::to_line_segments(img) /*subsampled_shape(img, 3)*/;
   };
-
-  auto const i0 = load_svg("M12,21.35L10.55,20.03C5.4,15.36 2,12.27 2,8.5C2,5.41 4.42,3 7.5,3C9.24,3 10.91,3.81 12,5.08C13.09,3.81 14.76,3 16.5,3C19.58,3 22,5.41 22,8.5C22,12.27 18.6,15.36 13.45,20.03L12,21.35Z");
-  auto const i1 = load_svg("M12.1,18.55L12,18.65L11.89,18.55C7.14,14.24 4,11.39 4,8.5C4,6.5 5.5,5 7.5,5C9.04,5 10.54,6 11.07,7.36H12.93C13.46,6 14.96,5 16.5,5C18.5,5 20,6.5 20,8.5C20,11.39 16.86,14.24 12.1,18.55M16.5,3C14.76,3 13.09,3.81 12,5.08C10.91,3.81 9.24,3 7.5,3C4.42,3 2,5.41 2,8.5C2,12.27 5.4,15.36 10.55,20.03L12,21.35L13.45,20.03C18.6,15.36 22,12.27 22,8.5C22,5.41 19.58,3 16.5,3Z");
-  auto const i2 = load_svg("M8,5.14V19.14L19,12.14L8,5.14Z");
-  auto const i3 = load_svg("M9,5A4,4 0 0,1 13,9A4,4 0 0,1 9,13A4,4 0 0,1 5,9A4,4 0 0,1 9,5M9,15C11.67,15 17,16.34 17,19V21H1V19C1,16.34 6.33,15 9,15M16.76,5.36C18.78,7.56 18.78,10.61 16.76,12.63L15.08,10.94C15.92,9.76 15.92,8.23 15.08,7.05L16.76,5.36M20.07,2C24,6.05 23.97,12.11 20.07,16L18.44,14.37C21.21,11.19 21.21,6.65 18.44,3.63L20.07,2Z");
-  auto const i4 = load_svg("M22.11 21.46L2.39 1.73L1.11 3L5.2 7.09C3.25 7.5 1.85 9.27 2 11.31C2.12 12.62 2.86 13.79 4 14.45V16C4 16.55 4.45 17 5 17H7V14.88C5.72 13.58 5 11.83 5 10C5 9.11 5.18 8.23 5.5 7.4L7.12 9C6.74 10.84 7.4 12.8 9 14V16C9 16.55 9.45 17 10 17H14C14.31 17 14.57 16.86 14.75 16.64L17 18.89V19C17 19.34 16.94 19.68 16.83 20H18C18.03 20 18.06 20 18.09 20L20.84 22.73L22.11 21.46M9.23 11.12L10.87 12.76C10.11 12.46 9.53 11.86 9.23 11.12M13 15H11V12.89L13 14.89V15M10.57 7.37L9.13 5.93C10.86 4.72 13.22 4.67 15 6C16.26 6.94 17 8.43 17 10C17 11.05 16.67 12.05 16.08 12.88L14.63 11.43C14.86 11 15 10.5 15 10C15 8.34 13.67 7 12 7C11.5 7 11 7.14 10.57 7.37M17.5 14.31C18.47 13.09 19 11.57 19 10C19 8.96 18.77 7.94 18.32 7C19.63 7.11 20.8 7.85 21.46 9C22.57 10.9 21.91 13.34 20 14.45V16C20 16.22 19.91 16.42 19.79 16.59L17.5 14.31M10 18H14V19C14 19.55 13.55 20 13 20H11C10.45 20 10 19.55 10 19V18M7 19C7 19.34 7.06 19.68 7.17 20H6C5.45 20 5 19.55 5 19V18H7V19Z");
-  goop::rect icon_rect{ {0,0},{24,24} };
 
   struct vector_icon
   {
@@ -950,59 +878,65 @@ int main()
   using vector_path = std::variant<glyph, vector_icon, raster_image>;
 
   {
-
-    //emplace(i0, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8);
-    //emplace(i1, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8 + 24);
-    //emplace(i2, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8 + 24 + 24);
-    //emplace(i3, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8 + 24 + 24 + 24);
-    //emplace(i4, goop::rect{ {0,0}, {24, 24}}, 1, 5, 1.f, img, iw, ih, 8, 8 + 24 + 24 + 24 + 24);
-
     auto const size = 20;
     auto const scale = size / fnt.units_per_em();
-    auto const sdf_radius = 0.5f;
+    auto const sdf_radius = 2.f;
 
     rnu::thread_pool pool;
 
-    std::vector<goop::rect> bounds;
+    std::vector<rnu::rect2f> bounds;
     std::vector<vector_path> paths;
 
     int const pad = std::ceilf(sdf_radius);
-    auto const add = [&](goop::rect r, auto type)
+    auto const add = [&](rnu::rect2f r, auto type)
     {
-      r.size *= type.scale;
-      r.size += 2 * pad;
-      r.position *= type.scale;
+      if constexpr (!std::same_as<std::decay_t<decltype(type)>, raster_image>)
+      {
+        r.size *= type.scale;
+        r.size += 2 * pad;
+        r.position *= type.scale;
+      }
       bounds.push_back(std::move(r));
       paths.push_back(std::move(type));
     };
 
-    add(icon_rect, vector_icon{ "M12,21.35L10.55,20.03C5.4,15.36 2,12.27 2,8.5C2,5.41 4.42,3 7.5,3C9.24,3 10.91,3.81 12,5.08C13.09,3.81 14.76,3 16.5,3C19.58,3 22,5.41 22,8.5C22,12.27 18.6,15.36 13.45,20.03L12,21.35Z", 1.0f });
-    add(icon_rect, vector_icon{ "M12.1,18.55L12,18.65L11.89,18.55C7.14,14.24 4,11.39 4,8.5C4,6.5 5.5,5 7.5,5C9.04,5 10.54,6 11.07,7.36H12.93C13.46,6 14.96,5 16.5,5C18.5,5 20,6.5 20,8.5C20,11.39 16.86,14.24 12.1,18.55M16.5,3C14.76,3 13.09,3.81 12,5.08C10.91,3.81 9.24,3 7.5,3C4.42,3 2,5.41 2,8.5C2,12.27 5.4,15.36 10.55,20.03L12,21.35L13.45,20.03C18.6,15.36 22,12.27 22,8.5C22,5.41 19.58,3 16.5,3Z", 1.0f });
-    add(icon_rect, vector_icon{ "M8,5.14V19.14L19,12.14L8,5.14Z", 2.0f });
-    add(icon_rect, vector_icon{ "M9,5A4,4 0 0,1 13,9A4,4 0 0,1 9,13A4,4 0 0,1 5,9A4,4 0 0,1 9,5M9,15C11.67,15 17,16.34 17,19V21H1V19C1,16.34 6.33,15 9,15M16.76,5.36C18.78,7.56 18.78,10.61 16.76,12.63L15.08,10.94C15.92,9.76 15.92,8.23 15.08,7.05L16.76,5.36M20.07,2C24,6.05 23.97,12.11 20.07,16L18.44,14.37C21.21,11.19 21.21,6.65 18.44,3.63L20.07,2Z", 1.0f });
-    add(icon_rect, vector_icon{ "M22.11 21.46L2.39 1.73L1.11 3L5.2 7.09C3.25 7.5 1.85 9.27 2 11.31C2.12 12.62 2.86 13.79 4 14.45V16C4 16.55 4.45 17 5 17H7V14.88C5.72 13.58 5 11.83 5 10C5 9.11 5.18 8.23 5.5 7.4L7.12 9C6.74 10.84 7.4 12.8 9 14V16C9 16.55 9.45 17 10 17H14C14.31 17 14.57 16.86 14.75 16.64L17 18.89V19C17 19.34 16.94 19.68 16.83 20H18C18.03 20 18.06 20 18.09 20L20.84 22.73L22.11 21.46M9.23 11.12L10.87 12.76C10.11 12.46 9.53 11.86 9.23 11.12M13 15H11V12.89L13 14.89V15M10.57 7.37L9.13 5.93C10.86 4.72 13.22 4.67 15 6C16.26 6.94 17 8.43 17 10C17 11.05 16.67 12.05 16.08 12.88L14.63 11.43C14.86 11 15 10.5 15 10C15 8.34 13.67 7 12 7C11.5 7 11 7.14 10.57 7.37M17.5 14.31C18.47 13.09 19 11.57 19 10C19 8.96 18.77 7.94 18.32 7C19.63 7.11 20.8 7.85 21.46 9C22.57 10.9 21.91 13.34 20 14.45V16C20 16.22 19.91 16.42 19.79 16.59L17.5 14.31M10 18H14V19C14 19.55 13.55 20 13 20H11C10.45 20 10 19.55 10 19V18M7 19C7 19.34 7.06 19.68 7.17 20H6C5.45 20 5 19.55 5 19V18H7V19Z", 1.0f });
+    add({ {0,0},{24,24} }, vector_icon{ "M12,21.35L10.55,20.03C5.4,15.36 2,12.27 2,8.5C2,5.41 4.42,3 7.5,3C9.24,3 10.91,3.81 12,5.08C13.09,3.81 14.76,3 16.5,3C19.58,3 22,5.41 22,8.5C22,12.27 18.6,15.36 13.45,20.03L12,21.35Z", 1.0f });
+    add({ {0,0},{24,24} }, vector_icon{ "M12.1,18.55L12,18.65L11.89,18.55C7.14,14.24 4,11.39 4,8.5C4,6.5 5.5,5 7.5,5C9.04,5 10.54,6 11.07,7.36H12.93C13.46,6 14.96,5 16.5,5C18.5,5 20,6.5 20,8.5C20,11.39 16.86,14.24 12.1,18.55M16.5,3C14.76,3 13.09,3.81 12,5.08C10.91,3.81 9.24,3 7.5,3C4.42,3 2,5.41 2,8.5C2,12.27 5.4,15.36 10.55,20.03L12,21.35L13.45,20.03C18.6,15.36 22,12.27 22,8.5C22,5.41 19.58,3 16.5,3Z", 1.0f });
+    add({ {0,0},{24,24} }, vector_icon{ "M8,5.14V19.14L19,12.14L8,5.14Z", 2.0f });
+    add({ {0,0},{24,24} }, vector_icon{ "M9,5A4,4 0 0,1 13,9A4,4 0 0,1 9,13A4,4 0 0,1 5,9A4,4 0 0,1 9,5M9,15C11.67,15 17,16.34 17,19V21H1V19C1,16.34 6.33,15 9,15M16.76,5.36C18.78,7.56 18.78,10.61 16.76,12.63L15.08,10.94C15.92,9.76 15.92,8.23 15.08,7.05L16.76,5.36M20.07,2C24,6.05 23.97,12.11 20.07,16L18.44,14.37C21.21,11.19 21.21,6.65 18.44,3.63L20.07,2Z", 1.0f });
+    add({ {0,0},{24,24} }, vector_icon{ "M22.11 21.46L2.39 1.73L1.11 3L5.2 7.09C3.25 7.5 1.85 9.27 2 11.31C2.12 12.62 2.86 13.79 4 14.45V16C4 16.55 4.45 17 5 17H7V14.88C5.72 13.58 5 11.83 5 10C5 9.11 5.18 8.23 5.5 7.4L7.12 9C6.74 10.84 7.4 12.8 9 14V16C9 16.55 9.45 17 10 17H14C14.31 17 14.57 16.86 14.75 16.64L17 18.89V19C17 19.34 16.94 19.68 16.83 20H18C18.03 20 18.06 20 18.09 20L20.84 22.73L22.11 21.46M9.23 11.12L10.87 12.76C10.11 12.46 9.53 11.86 9.23 11.12M13 15H11V12.89L13 14.89V15M10.57 7.37L9.13 5.93C10.86 4.72 13.22 4.67 15 6C16.26 6.94 17 8.43 17 10C17 11.05 16.67 12.05 16.08 12.88L14.63 11.43C14.86 11 15 10.5 15 10C15 8.34 13.67 7 12 7C11.5 7 11 7.14 10.57 7.37M17.5 14.31C18.47 13.09 19 11.57 19 10C19 8.96 18.77 7.94 18.32 7C19.63 7.11 20.8 7.85 21.46 9C22.57 10.9 21.91 13.34 20 14.45V16C20 16.22 19.91 16.42 19.79 16.59L17.5 14.31M10 18H14V19C14 19.55 13.55 20 13 20H11C10.45 20 10 19.55 10 19V18M7 19C7 19.34 7.06 19.68 7.17 20H6C5.45 20 5 19.55 5 19V18H7V19Z", 1.0f });
 
     int iiix, iiiy, iiich;
     stbi_info("../../../../../res/vintagething.jpg", &iiix, &iiiy, &iiich);
-    add(goop::rect{ {0,0}, {iiix, iiiy} }, raster_image{ "../../../../../res/vintagething.jpg" });
+    add(rnu::rect2f{ {0,0}, {iiix, iiiy} }, raster_image{ "../../../../../res/vintagething.jpg" });
+    stbi_info("../../../../../res/testsmall.jpg", &iiix, &iiiy, &iiich);
+    add(rnu::rect2f{ {0,0}, {iiix, iiiy} }, raster_image{ "../../../../../res/testsmall.jpg" });
 
-    for (int x = 0; x <= 0xFFFF; ++x)
+    const std::pair<char16_t, char16_t> char_ranges[] = {
+      goop::character_ranges::basic_latin,
+      goop::character_ranges::c1_controls_and_latin_1_supplement,
+    };
+
+    for (auto p : char_ranges)
     {
-      auto const gly = fnt.glyph(x);
-      if (gly == goop::glyph_id::missing)
-        continue;
+      for (char16_t x = p.first; x <= p.second; ++x)
+      {
+        auto const gly = fnt.glyph(x);
+        if (gly == goop::glyph_id::missing)
+          continue;
 
-      add(fnt.get_rect(gly), glyph{ gly, scale });
+        add(fnt.get_rect(gly), glyph{ gly, scale });
+      }
     }
 
-    std::vector<goop::rect> original_bounds = bounds;
+    std::vector<rnu::rect2f> original_bounds = bounds;
 
 
-    int iw = 2048;
+    int iw = 1024;
     goop::skyline_packer skyline;
     int ih = skyline.pack(bounds, iw);
 
-    std::vector<std::uint8_t> img(iw * ih);
+    std::vector<rnu::vec3ui8> img(iw * ih);
 
     auto const conc = pool.concurrency();
     std::vector<std::future<void>> futs(conc);
@@ -1012,7 +946,7 @@ int main()
       futs[n] = pool.run_async([&, n] {
         for (int i = n; i < bounds.size(); i += conc)
         {
-          std::visit(overload{
+          std::visit(rnu::overload{
             [&](glyph g) {
               emplace(
                 load_letter(g.id),
@@ -1039,7 +973,7 @@ int main()
                 {
                   int const ix = x + bounds[i].position.x;
                   int const iy = y + bounds[i].position.y;
-                  img[ix + iy * iw] = data[(x + y * w) * 3];
+                  memcpy(&img[ix + iy * iw], &data[(x + y * w) * 3], 3);
                 }
               }
             }
@@ -1052,7 +986,7 @@ int main()
 
     rnu::await_all(futs);
 
-    stbi_write_png("../../../../../result.png", iw, ih, 1, img.data(), 0);
+    stbi_write_png("../../../../../result.png", iw, ih, 3, img.data(), 0);
   }
 
   glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, true);

@@ -61,7 +61,7 @@ add_library (goop STATIC
   "vectors/lines.hpp"
   "vectors/font.hpp"
   "vectors/font.cpp"
-  "vectors/font_languages.hpp" "vectors/font_features.hpp")
+  "vectors/font_languages.hpp" "vectors/font_features.hpp" "vectors/skyline_packer.cpp")
 target_compile_features(goop PUBLIC cxx_std_20)
 target_link_libraries(goop PUBLIC glfw glad::glad rnu::rnu)
 target_include_directories(goop PUBLIC ${STB_INCLUDE_DIR})
