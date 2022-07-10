@@ -5,8 +5,6 @@ cmake_minimum_required (VERSION 3.8)
 
 # Add source to this project's executable.
 add_library (goop STATIC
-  "generic/geometry.hpp"
-  "generic/geometry.cpp"  
   "generic/mapped_buffer.hpp" 
   "generic/mapped_buffer.inl.hpp" 
   "opengl/mapped_buffer.hpp" 
@@ -27,8 +25,6 @@ add_library (goop STATIC
   "file/obj.hpp"
   "opengl/handle.hpp"
   "opengl/handle.cpp"
-  "opengl/geometry.cpp"
-  "opengl/geometry.hpp"
   "opengl/draw_state.hpp"
   "opengl/draw_state.cpp"
   "generic/render_target.hpp"
@@ -61,7 +57,7 @@ add_library (goop STATIC
   "vectors/lines.hpp"
   "vectors/font.hpp"
   "vectors/font.cpp"
-  "vectors/font_languages.hpp" "vectors/font_features.hpp" "vectors/skyline_packer.cpp")
+  "vectors/font_languages.hpp" "vectors/font_features.hpp" "vectors/skyline_packer.cpp" "generic/buffer.cpp" "opengl/buffer.cpp" "opengl/geometry_format.cpp" "multi_draw.cpp" "geometry.cpp")
 target_compile_features(goop PUBLIC cxx_std_20)
 target_link_libraries(goop PUBLIC glfw glad::glad rnu::rnu)
 target_include_directories(goop PUBLIC ${STB_INCLUDE_DIR})

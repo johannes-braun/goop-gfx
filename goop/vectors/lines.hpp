@@ -299,7 +299,7 @@ namespace goop::lines
   }
 
 
-  std::vector<line_segment> to_line_segments(goop::vector_image const& image)
+  inline std::vector<line_segment> to_line_segments(goop::vector_image const& image)
   {
     struct path_visitor
     {

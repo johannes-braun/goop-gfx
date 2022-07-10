@@ -2,6 +2,7 @@
 #include <glad/glad.h>
 #include <rnu/math/math.hpp>
 #include "graphics.hpp"
+#include "geometry.hpp"
 #include <rnu/camera.hpp>
 #include <iostream>
 #include <array>

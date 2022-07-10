@@ -2,6 +2,7 @@
 
 #include <rnu/math/math.hpp>
 #include <charconv>
+#include <cassert>
 
 namespace goop
 {

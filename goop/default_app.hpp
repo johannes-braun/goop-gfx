@@ -6,6 +6,7 @@
 #include <rnu/camera.hpp>
 #include <graphics.hpp>
 #include <animation/smooth.hpp>
+#include <chrono>
 
 namespace goop
 {

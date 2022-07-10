@@ -4,6 +4,11 @@
 
 namespace goop::character_ranges
 {
+  constexpr auto make_char_range(char16_t first, char16_t last)
+  {
+    return std::pair(first, last);
+  }
+
   static constexpr auto basic_latin = std::pair<char16_t, char16_t>(0x0000, 0x007F);
   static constexpr auto c1_controls_and_latin_1_supplement = std::pair<char16_t, char16_t>(0x0080, 0x00FF);
   static constexpr auto latin_extended_a = std::pair<char16_t, char16_t>(0x0100, 0x017F);

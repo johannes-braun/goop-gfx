@@ -14,7 +14,7 @@ namespace goop::opengl
   }
   void render_target::bind_texture_layer(int binding_point, texture_base const& texture, int level, int layer)
   {
-    auto const base_texture = dynamic_cast<opengl::texture const&>(texture);
+    auto const& base_texture = dynamic_cast<opengl::texture const&>(texture);
     glNamedFramebufferTextureLayer(handle(), GL_COLOR_ATTACHMENT0 + binding_point, base_texture.handle(), level, layer);
   }
 

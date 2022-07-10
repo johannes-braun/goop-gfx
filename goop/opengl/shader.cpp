@@ -93,7 +93,7 @@ namespace goop::opengl
 
   void shader_pipeline::use(shader_base const& shader)
   {
-    auto const gl_shader = dynamic_cast<opengl::shader const&>(shader);
+    auto const& gl_shader = dynamic_cast<opengl::shader const&>(shader);
     glUseProgramStages(handle(), gl_shader.mask(), gl_shader.handle());
   }
 

@@ -1,4 +1,7 @@
-﻿#include <components/physics_component.hpp>
+﻿#include "sdf_font.hpp"
+#include "text.hpp"
+
+#include <components/physics_component.hpp>
 #include <components/collider_component.hpp>
 #include <components/movement_component.hpp>
 #include <stb_image.h>
@@ -20,6 +23,7 @@
 #include <rnu/utility.hpp>
 #include <vectors/skyline_packer.hpp>
 #include <vectors/character_ranges.hpp>
+#include <geometry.hpp>
 
 //#define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
@@ -316,394 +320,6 @@ void emplace(T&& polygon, rnu::rect2f const& r, float scale, int padding, float 
     }
   }
 }
-namespace goop
-{
-  class sdf_font_atlas
-  {
-  public:
-    sdf_font_atlas(int atlas_width, float base_size, float sdf_width, goop::font font, std::span<std::pair<char16_t, char16_t> const> unicode_ranges)
-      : _font(std::move(font)), _base_size{ base_size }, _sdf_width{sdf_width}, _width(atlas_width)
-    {
-      std::vector<rnu::rect2f> bounds;
-      std::vector<glyph_info> infos;
-      auto const scale = base_size / font.units_per_em();
-
-      for (auto p : unicode_ranges)
-      {
-        for (char16_t x = p.first; x <= p.second; ++x)
-        {
-          auto const gly = _font.glyph(x);
-          if (gly == goop::glyph_id::missing)
-            continue;
-
-          auto r = _font.get_rect(gly);
-          r.size *= scale;
-          r.size += 2 * sdf_width;
-          r.position *= scale;
-
-          auto const defb = r;
-
-          r.size.x = std::ceilf(r.position.x + r.size.x) - r.position.x;
-          r.size.y = std::ceilf(r.position.y + r.size.y) - r.position.y;
-          r.position.x = std::floorf(r.position.x);
-          r.position.y = std::floorf(r.position.y);
-
-          rnu::rect2f const err{
-            .position = r.position - defb.position,
-            .size = r.size - defb.size
-          };
-
-          bounds.push_back(std::move(r));
-          infos.push_back(glyph_info{ x, gly, scale, defb, r, err });
-        }
-      }
-
-      goop::skyline_packer skyline;
-      _height = skyline.pack(bounds, _width);
-
-      for (int i=0; i<infos.size(); ++i)
-      {
-        auto info = infos[i];
-        info.packed_bounds = bounds[i];
-        _infos[info.id] = info;
-      }
-    }
-
-    void dump(std::vector<std::uint8_t>& image, int& w, int& h)
-    {
-      w = _width;
-      h = _height + 1;
-      image.resize(w * h);
-
-      std::mutex image_mutex;
-        
-      std::for_each(std::execution::par_unseq, begin(_infos), end(_infos), [this, w, h, &image, &image_mutex](std::pair<glyph_id, glyph_info> const& pair) {
-
-        auto const& [ch, info] = pair;
-        auto const& [character, id, scale, db, pb, err] = info;
-        auto const& outline = load_glyph(pair.second.id);
-
-        auto const at = [&](int x, int y) -> std::uint8_t& { return image[x + y * w]; };
-
-        //float const w = r.max.x - r.min.x + padding * 2;
-        //float const h = r.max.y - r.min.y + padding * 2;
-        auto const min_x = pb.position.x;
-        auto const min_y = pb.position.y;
-        auto const max_x = pb.position.x + pb.size.x;
-        auto const max_y = pb.position.y + pb.size.y;
-
-        auto const voff = -pb.position + db.position + err.position - rnu::vec2(_sdf_width, _sdf_width);
-
-        std::unique_lock lock(image_mutex);
-        for (int i = min_x; i <= max_x; ++i)
-        {
-          for (int j = min_y; j <= max_y; ++j)
-          {
-            auto const signed_distance = goop::lines::signed_distance(outline, { (i + voff.x) / scale, (j + voff.y) / scale }) * scale;
-            auto min = -_sdf_width;
-            auto max = _sdf_width;
-
-            auto const iix = 0 + i;
-            auto const iiy = 0 + j;
-
-            at(iix, iiy) = std::uint8_t(
-              (1 - std::clamp((signed_distance - min) / (max - min), 0.0f, 1.0f)) * 255
-            );
-          }
-        }
-        });
-    }
-
-  private:
-    std::vector<goop::lines::line> const& load_glyph(glyph_id glyph)
-    {
-      static thread_local std::vector<goop::outline_segment> outline;
-      outline.clear();
-      static thread_local std::vector<goop::lines::line> letter;
-      letter.clear();
-
-      rnu::rect2f bounds;
-      struct
-      {
-        void operator()(goop::line const& line)
-        {
-          goop::lines::subsample(goop::lines::line{
-            .start = line.start,
-            .end = line.end
-            }, 3, letter);
-        }
-        void operator()(goop::bezier const& line)
-        {
-          goop::lines::subsample(goop::lines::bezier{
-            .start = line.start,
-            .control = line.control,
-            .end = line.end
-            }, 3, letter);
-        }
-      } visitor;
-
-      _font.outline(glyph, bounds, [&](goop::outline_segment const& o) { std::visit(visitor, o); });
-
-      return letter;
-    }
-
-    std::optional<glyph_id> ligature(goop::font const& font, goop::font_feature_info const& lig_feature, std::span<goop::glyph_id const> glyphs)
-    {
-      auto const feat_result = font.lookup_substitution(lig_feature, glyphs);
-      if (!feat_result)
-        return std::nullopt;
-
-      auto const count = font.substitution_count(*feat_result);
-      if (count != 1)
-        return std::nullopt;
-
-      return font.substitution_glyph(*feat_result, 0);
-    }
-
-  public:
-    struct set_glyph_t
-    {
-      glyph_id glyph;
-      rnu::rect2f bounds;
-      rnu::rect2f uvs;
-    };
-
-    std::vector<set_glyph_t> text_set(std::wstring_view str, float const em_size, rnu::vec2 cursor)
-    {
-      auto ligature_feature = _font.query_feature(goop::font_feature_type::substitution, goop::font_script::scr_latin, goop::font_language::lang_default, goop::font_feature::ft_liga);
-      auto kerning_feature = _font.query_feature(goop::font_feature_type::positioning, goop::font_script::scr_latin, goop::font_language::lang_default, goop::font_feature::ft_kern);
-
-
-      thread_local static std::vector<std::vector<goop::glyph_id>> glyph_lines;
-      glyph_lines.clear();
-      glyph_lines.emplace_back();
-      for (auto& c : str)
-      {
-        if (c == '\n')
-        {
-          glyph_lines.emplace_back();
-          continue;
-        }
-        glyph_lines.back().push_back(_font.glyph(c));
-      }
-
-      bool has_substituted = true;
-      auto const font_scale = em_size / _font.units_per_em();
-
-      while (has_substituted)
-      {
-        has_substituted = false;
-        for (auto& glyphs : glyph_lines)
-        {
-          for (int i = 0; i < glyphs.size() - 1; ++i)
-          {
-            auto const second = glyphs.size() - 1 - i;
-            auto const first = second - 1;
-
-            auto sub = (i < glyphs.size() - 2) && ligature_feature ? ligature(_font, *ligature_feature, std::array{ glyphs[first - 1], glyphs[first], glyphs[second] }) : std::nullopt;
-            if (!sub && ligature_feature)
-              sub = ligature(_font, *ligature_feature, std::array{ glyphs[first], glyphs[second] });
-            if (sub)
-            {
-              has_substituted = true;
-              glyphs[first] = *sub;
-              glyphs.erase(glyphs.begin() + second);
-            }
-          }
-        }
-      }
-
-      std::vector<set_glyph_t> set_glyphs(std::accumulate(begin(glyph_lines), end(glyph_lines), 0ull, [](auto const& val, auto& v) { return val + v.size(); }));
-
-      auto const basey = 40;
-      auto const rad = 0.5f;
-
-      int base_i = 0;
-      float base_x = cursor.x;
-      for (auto const& glyphs : glyph_lines)
-      {
-        for (int i = 0; i < glyphs.size(); ++i)
-        {
-          auto const gly = glyphs[i];
-          auto& result = set_glyphs[base_i + i];
-          result.glyph = gly;
-          auto const rec = _font.get_rect(gly);
-
-          auto const next_glyph = i < glyphs.size() - 1 ? glyphs[i + 1] : goop::glyph_id::missing;
-
-          auto const kerning = !kerning_feature ? std::nullopt : _font.lookup_positioning(*kerning_feature, std::array{ gly, next_glyph });
-
-          auto const kerning_values = !kerning ? nullptr : std::get_if<font_accessor::pair_value_feature>(&*kerning);
-
-          auto [ad1, be1] = _font.advance_bearing(gly);
-
-          // Kerning somewhat broken in Roboto-Regular between K and r
-          /*if (kerning_values)
-          {
-            ad1 += kerning_values->first.x_advance;
-            be1 += kerning_values->first.x_placement;
-          }*/
-
-          auto const& info = _infos[gly];
-          auto const factor = (em_size / _base_size);
-
-          result.bounds.size = rec.size * font_scale;
-          result.bounds.position = cursor + rnu::vec2((be1 + rec.position.x) * font_scale, rec.position.y * font_scale);
-          //result.bounds.position += info.error.position * factor;
-          result.bounds.position -= _sdf_width * factor;
-          //result.bounds.size += info.error.size * factor;
-          result.bounds.size += 2*_sdf_width * factor;
-
-          auto const scale_by = 1.0 / rnu::vec2(_width, _height);
-          result.uvs = info.packed_bounds;
-          result.uvs.position -= info.error.position;
-          result.uvs.size -= info.error.size;
-          result.uvs.position *= scale_by;
-          result.uvs.size *= scale_by;
-
-          cursor.x += ad1 * font_scale;
-        }
-        base_i += glyphs.size();
-        cursor.x = base_x;
-        cursor.y -= (_font.ascent() - _font.descent()) * font_scale;
-      }
-
-      return set_glyphs;
-    }
-
-  private:
-    struct glyph_info
-    {
-      char16_t character;
-      goop::glyph_id id;
-      float scale;
-      rnu::rect2f default_bounds;
-      rnu::rect2f packed_bounds;
-
-      rnu::rect2f error;
-    };
-
-    goop::font _font;
-    float _base_size = 0;
-    float _sdf_width = 0;
-    int _width = 0;
-    int _height = 0;
-    std::unordered_map<glyph_id, glyph_info> _infos;
-  };
-}
-//
-//namespace goop
-//{
-//  struct set_glyph
-//  {
-//    glyph_id glyph;
-//    rnu::vec2 offset;
-//    rnu::rect2f bounds;
-//  };
-//
-//  std::optional<glyph_id> ligature(goop::font const& font, goop::font_feature_info const& lig_feature, std::span<goop::glyph_id const> glyphs)
-//  {
-//    auto const feat_result = font.lookup_substitution(lig_feature, glyphs);
-//    if (!feat_result)
-//      return std::nullopt;
-//
-//    auto const count = font.substitution_count(*feat_result);
-//    if (count != 1)
-//      return std::nullopt;
-//
-//    return font.substitution_glyph(*feat_result, 0);
-//  }
-//
-//  std::vector<set_glyph> text_set(goop::font const& font, std::wstring_view str, float const em_size, rnu::vec2 cursor)
-//  {
-//    auto ligature_feature = font.query_feature(goop::font_feature_type::substitution, goop::font_feature::ft_liga);
-//    auto kerning_feature = font.query_feature(goop::font_feature_type::positioning, goop::font_feature::ft_kern);
-//
-//    thread_local static std::vector<std::vector<goop::glyph_id>> glyph_lines;
-//    glyph_lines.clear();
-//    glyph_lines.emplace_back();
-//    for (auto& c : str)
-//    {
-//      if (c == '\n')
-//      {
-//        glyph_lines.emplace_back();
-//        continue;
-//      }
-//      glyph_lines.back().push_back(font.glyph(c));
-//    }
-//
-//    bool has_substituted = true;
-//    auto const font_scale = em_size / font.units_per_em();
-//
-//    while (has_substituted)
-//    {
-//      has_substituted = false;
-//      for (auto& glyphs : glyph_lines)
-//      {
-//        for (int i = 0; i < glyphs.size() - 1; ++i)
-//        {
-//          auto const second = glyphs.size() - 1 - i;
-//          auto const first = second - 1;
-//
-//          auto sub = (i < glyphs.size() - 2) && ligature_feature ? ligature(font, *ligature_feature, std::array{ glyphs[first - 1], glyphs[first], glyphs[second] }) : std::nullopt;
-//          if (!sub && ligature_feature)
-//            sub = ligature(font, *ligature_feature, std::array{ glyphs[first], glyphs[second] });
-//          if (sub)
-//          {
-//            has_substituted = true;
-//            glyphs[first] = *sub;
-//            glyphs.erase(glyphs.begin() + second);
-//          }
-//        }
-//      }
-//    }
-//
-//    std::vector<set_glyph> set_glyphs(std::accumulate(begin(glyph_lines), end(glyph_lines), 0ull, [](auto const& val, auto& v) { return val + v.size(); }));
-//
-//    auto const basey = 40;
-//    auto const rad = 0.5f;
-//
-//    int base_i = 0;
-//    float base_x = cursor.x;
-//    for (auto const& glyphs : glyph_lines)
-//    {
-//      for (int i = 0; i < glyphs.size(); ++i)
-//      {
-//        auto const gly = glyphs[i];
-//        auto& result = set_glyphs[base_i + i];
-//        result.glyph = gly;
-//        auto const rec = font.get_rect(gly);
-//
-//        auto const next_glyph = i < glyphs.size() - 1 ? glyphs[i + 1] : goop::glyph_id{ 0 };
-//
-//        auto const kerning = !kerning_feature ? std::nullopt : font.lookup_positioning(*kerning_feature, std::array{ gly, next_glyph });
-//
-//        auto const kerning_values = !kerning ? nullptr : std::get_if<font_accessor::pair_value_feature>(&*kerning);
-//
-//        auto [ad1, be1] = font.advance_bearing(gly);
-//
-//        if (kerning_values)
-//        {
-//          ad1 += kerning_values->first.x_advance;
-//          be1 += kerning_values->first.x_placement;
-//        }
-//
-//        result.bounds = rec;
-//        result.bounds.position *= font_scale;
-//        result.bounds.size *= font_scale;
-//        result.offset = cursor + rnu::vec2(be1 * font_scale, 0);
-//
-//        cursor.x += ad1 * font_scale;
-//      }
-//      base_i += glyphs.size();
-//      cursor.x = base_x;
-//      cursor.y -= (font.ascent() - font.descent()) * font_scale;
-//    }
-//
-//    return set_glyphs;
-//  }
-//
-//}
 
 template<typename T>
 void copy_linear(std::span<T> dst, int dw, int dh, rnu::rect2f dst_rect, std::span<T const> src, int sw, int sh, rnu::rect2f src_rect)
@@ -739,9 +355,9 @@ void copy_linear(std::span<T> dst, int dw, int dh, rnu::rect2f dst_rect, std::sp
   {
     for (int y = dst_y_min; y <= dst_y_max; ++y)
     {
-      float const fac_x = src_x_min + (src_x_max - src_x_min) * ((x-dst_x_minf) / float(dst_x_maxf - dst_x_minf));
+      float const fac_x = src_x_min + (src_x_max - src_x_min) * ((x - dst_x_minf) / float(dst_x_maxf - dst_x_minf));
       auto const fract_x = std::fmodf(fac_x, 1.0f);
-      float const fac_y = src_y_min + (src_y_max - src_y_min) * ((y-dst_y_minf) / float(dst_y_maxf - dst_y_minf));
+      float const fac_y = src_y_min + (src_y_max - src_y_min) * ((y - dst_y_minf) / float(dst_y_maxf - dst_y_minf));
       auto const fract_y = std::fmodf(fac_y, 1.0f);
 
       auto const src_x_0 = int(fac_x);
@@ -766,7 +382,7 @@ void copy_linear(std::span<T> dst, int dw, int dh, rnu::rect2f dst_rect, std::sp
       auto const d = -(final_value * (2 * 8.f) - 8.f) / (25.f / 14.f);
 
       auto const factor = rnu::smoothstep(0.9, -0.1, d) * 255;
-      
+
       set(x, y) = std::max<uint8_t>(set(x, y), factor);
     }
   }
@@ -774,10 +390,8 @@ void copy_linear(std::span<T> dst, int dw, int dh, rnu::rect2f dst_rect, std::sp
 
 int main()
 {
-  goop::font fnt("../../../../../res/MPLUS1p-Regular.ttf");
 
-
-  goop::sdf_font_atlas atlas(1024, 25, 8, goop::font("../../../../../res/Roboto-Regular.ttf"), std::array{
+  goop::gui::sdf_font atlas(1024, 25, 25, goop::font("../../../../../res/SawarabiGothic-Regular.ttf"), std::array{
     goop::character_ranges::basic_latin,
     goop::character_ranges::c1_controls_and_latin_1_supplement,
     goop::character_ranges::latin_extended_a,
@@ -785,7 +399,15 @@ int main()
     goop::character_ranges::latin_extended_b,
     goop::character_ranges::alphabetic_presentation_forms,
     goop::character_ranges::currency_symbols,
+    goop::character_ranges::katakana,
+    goop::character_ranges::katakana_phonetic_extensions,
+    goop::character_ranges::hiragana,
+    goop::character_ranges::make_char_range(0x79D2, 0x79D2),
     });
+
+#if 0
+  goop::font fnt("../../../../../res/MPLUS1p-Regular.ttf");
+
 
   std::vector<std::uint8_t> atlas_img;
   int aiw, aih;
@@ -795,8 +417,8 @@ int main()
 
   std::vector<std::uint8_t> out_image(1024 * 512);
 
-  auto const set_text = atlas.text_set(L"Gefiewaltige Krater benützt man nötigst. 50% Maßschneiderung!", 18, rnu::vec2{33, 33});
-  for(auto const& set : set_text)
+  auto const set_text = atlas.text_set(L"Gefiewaltige Krater benützt man nötigst. 50% Maßschneiderung!", 18, rnu::vec2{ 33, 33 });
+  for (auto const& set : set_text)
   {
     auto dst = set.bounds;
     dst.position /= rnu::vec2(1024, 512);
@@ -989,6 +611,8 @@ int main()
     stbi_write_png("../../../../../result.png", iw, ih, 3, img.data(), 0);
   }
 
+#endif
+
   glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, true);
   goop::default_app app("Model");
   glDebugMessageCallback([](GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* userParam) {
@@ -1101,6 +725,41 @@ int main()
 
   int img = 0;
 
+
+
+  goop::gui::text fps_text;
+  fps_text.set_font(atlas);
+  fps_text.set_size(20);
+
+  goop::gui::text title_text;
+  title_text.set_font(atlas);
+  title_text.set_size(42);
+  title_text.set_text(L"GOOP Graphics Whatever");
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   goop::input_key anim_key(app.window().get(), GLFW_KEY_O);
   goop::input_key restart_anim(app.window().get(), GLFW_KEY_SPACE);
   goop::input_key key_u(app.window().get(), GLFW_KEY_UP);
@@ -1138,7 +797,7 @@ int main()
 
     auto const q = app.default_camera().rotation();
     float theta = std::atan2f(q.y, q.w);
-    ptcl->get<goop::transform_component>()->rotation = rnu::quat(cosf(theta), 0, sinf(theta), 0);
+    ptcl->get<goop::transform_component>()->rotation = rnu::quat(cosf(theta), 0, sinf(theta), 0); 
 
     auto fwd = ptcl->get<goop::transform_component>()->rotation * rnu::vec3(0, 0, -1);
     auto right = ptcl->get<goop::transform_component>()->rotation * rnu::vec3(1, 0, 0);
@@ -1156,6 +815,23 @@ int main()
     sampler->bind(state, 0);
     object_renderer.set_draw_state(app.default_draw_state());
     ecs.update(app.current_delta_time(), graphics_list);
+
+    static auto nX = 0.0;
+    static auto fn = 0;
+
+    nX += app.current_delta_time().count();
+    fn += 1;
+
+    if (nX > 0.1)
+    {
+      fps_text.set_text(L"フレームレートは\n" + std::to_wstring(std::int32_t(fn / nX)) + L"フレーム/秒です\n(Ja natürlich, viel Syaß!)");
+      nX = 0.0;
+      fn = 0;
+    }
+
+    title_text.draw(state, 0, 700, 600, 100);
+    fps_text.draw(state, 0, 0, 400, 300);
+
     img = app.end_frame();
   }
 }

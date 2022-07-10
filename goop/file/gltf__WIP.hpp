@@ -4,6 +4,7 @@
 #include <animation/animation.hpp>
 #include <graphics.hpp>
 #include <filesystem>
+#include "geometry.hpp"
 
 namespace goop
 {
