@@ -6,6 +6,7 @@ namespace goop::gui
 	{
 		_holder = std::move(holder);
 		set_atlas(_holder.value()->atlas_texture());
+		set_sdf_width(_holder.value()->sdf_width());
 	}
 	void symbol::set_icon(std::size_t index)
 	{

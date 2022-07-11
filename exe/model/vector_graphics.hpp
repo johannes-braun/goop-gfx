@@ -17,6 +17,7 @@ namespace goop
 		void load(int atlas_width, float sdf_width, std::span<goop::vector_image const> graphics);
 		set_symbol_t get(std::size_t index) const;
 		goop::texture const& atlas_texture();
+		float sdf_width() const;
 
 	private:
 		float _base_size = 0;

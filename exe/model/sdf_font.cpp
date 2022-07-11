@@ -134,7 +134,7 @@ namespace goop::gui
         goop::lines::subsample(goop::lines::line{
           .start = line.start,
           .end = line.end
-          }, 3, letter);
+          }, 6, letter);
       }
       void operator()(goop::bezier const& line)
       {
@@ -142,7 +142,7 @@ namespace goop::gui
           .start = line.start,
           .control = line.control,
           .end = line.end
-          }, 3, letter);
+          }, 6, letter);
       }
     } visitor;
 
@@ -162,7 +162,7 @@ namespace goop::gui
 
     return font.substitution_glyph(*feat_result, 0);
   }
-  std::vector<sdf_font_base::set_glyph_t> sdf_font_base::text_set(std::wstring_view str, int *num_lines)
+  std::vector<sdf_font_base::set_glyph_t> sdf_font_base::text_set(std::wstring_view str, int *num_lines, float* x_max)
   {
     rnu::vec2 cursor{ 0, 0 };
     auto ligature_feature = _font->query_feature(goop::font_feature_type::substitution, goop::font_script::scr_latin, goop::font_language::lang_default, goop::font_feature::ft_liga);
@@ -212,6 +212,9 @@ namespace goop::gui
     auto const basey = 40;
     auto const rad = 0.5f;
 
+    if (x_max)
+      *x_max = 0;
+
     int base_i = 0;
     float base_x = cursor.x;
     for (auto const& glyphs : glyph_lines)
@@ -254,6 +257,9 @@ namespace goop::gui
 
         cursor.x += ad1 * font_scale;
       }
+
+      if (x_max)
+        *x_max = std::max(*x_max, cursor.x);
       base_i += glyphs.size();
       cursor.x = base_x;
       cursor.y -= (_font->ascent() - _font->descent()) * font_scale;

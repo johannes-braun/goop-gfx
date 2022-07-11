@@ -24,7 +24,7 @@ namespace goop::gui
     };
 
     goop::texture const& atlas_texture();
-    std::vector<set_glyph_t> text_set(std::wstring_view str, int* num_lines = nullptr);
+    std::vector<set_glyph_t> text_set(std::wstring_view str, int* num_lines = nullptr, float* x_max = nullptr);
 
     float base_size() const;
     float sdf_width() const;

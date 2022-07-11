@@ -393,19 +393,19 @@ void copy_linear(std::span<T> dst, int dw, int dh, rnu::rect2f dst_rect, std::sp
 int main()
 {
 
-    goop::gui::sdf_font atlas(1024, 25, 25, goop::font("../../../../../res/SawarabiGothic-Regular.ttf"), std::array{
-      goop::character_ranges::basic_latin,
-      goop::character_ranges::c1_controls_and_latin_1_supplement,
-      goop::character_ranges::latin_extended_a,
-      goop::character_ranges::latin_extended_additional,
-      goop::character_ranges::latin_extended_b,
-      goop::character_ranges::alphabetic_presentation_forms,
-      goop::character_ranges::currency_symbols,
-      goop::character_ranges::katakana,
-      goop::character_ranges::katakana_phonetic_extensions,
-      goop::character_ranges::hiragana,
-      goop::character_ranges::make_char_range(0x79D2, 0x79D2),
-        });
+  goop::gui::sdf_font atlas(1024, 35, 25, goop::font("../../../../../res/SawarabiGothic-Regular.ttf"), std::array{
+    goop::character_ranges::basic_latin,
+    goop::character_ranges::c1_controls_and_latin_1_supplement,
+    goop::character_ranges::latin_extended_a,
+    goop::character_ranges::latin_extended_additional,
+    goop::character_ranges::latin_extended_b,
+    goop::character_ranges::alphabetic_presentation_forms,
+    goop::character_ranges::currency_symbols,
+    goop::character_ranges::katakana,
+    goop::character_ranges::katakana_phonetic_extensions,
+    goop::character_ranges::hiragana,
+    goop::character_ranges::make_char_range(0x79D2, 0x79D2),
+    });
 
 #if 0
   goop::font fnt("../../../../../res/MPLUS1p-Regular.ttf");
@@ -740,22 +740,20 @@ int main()
 
   goop::gui::symbol my_symbol;
   my_symbol.set_holder(holder);
-  my_symbol.set_icon(3);
-  my_symbol.set_scale(1);
-
+  my_symbol.set_icon(4);
+  my_symbol.set_scale(0.5);
+  my_symbol.set_color({ 0,0,0, 1 });
 
   goop::gui::text fps_text;
   fps_text.set_font(atlas);
-  fps_text.set_size(20);
+  fps_text.set_size(12);
+  fps_text.set_color({ 0, 0, 0, 1});
 
   goop::gui::text title_text;
   title_text.set_font(atlas);
-  title_text.set_size(42);
+  title_text.set_size(35);
   title_text.set_text(L"GOOP Graphics Whatever");
-
-
-
-
+  title_text.set_color({ 0, 0, 0, 1 });
 
 
 
@@ -810,7 +808,7 @@ int main()
 
     auto const q = app.default_camera().rotation();
     float theta = std::atan2f(q.y, q.w);
-    ptcl->get<goop::transform_component>()->rotation = rnu::quat(cosf(theta), 0, sinf(theta), 0); 
+    ptcl->get<goop::transform_component>()->rotation = rnu::quat(cosf(theta), 0, sinf(theta), 0);
 
     auto fwd = ptcl->get<goop::transform_component>()->rotation * rnu::vec3(0, 0, -1);
     auto right = ptcl->get<goop::transform_component>()->rotation * rnu::vec3(1, 0, 0);
@@ -837,13 +835,14 @@ int main()
 
     if (nX > 0.1)
     {
-      fps_text.set_text(L"フレームレートは\n" + std::to_wstring(std::int32_t(fn / nX)) + L"フレーム/秒です\n(Ja natürlich, viel Syaß!)");
+      //fps_text.set_text(L"フレームレートは" + std::to_wstring(std::int32_t(fn / nX)) + L"フレーム/秒です(Ja natürlich, viel Spaß!)");
+      fps_text.set_text(L"Framerate: " + std::to_wstring(std::int32_t(fn / nX)) + L"fps (Ja natürlich, viel Spaß!)");
       nX = 0.0;
       fn = 0;
     }
-    my_symbol.draw(state, 40, 40);
-    title_text.draw(state, 0, 700);
-    fps_text.draw(state, 0, 0);
+    my_symbol.draw(state, 0, 0);
+    title_text.draw(state, window_width / 2.f - title_text.size().x / 2.f, window_height - 120);
+    fps_text.draw(state, 30, 0);
 
     img = app.end_frame();
   }

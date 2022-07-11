@@ -9,6 +9,7 @@ namespace goop::gui
   {
     _font = std::move(font);
     set_atlas(_font.value()->atlas_texture());
+    set_sdf_width(_font.value()->sdf_width());
   }
 
   void text::set_size(float size)
@@ -20,9 +21,8 @@ namespace goop::gui
   {
     _glyphs.clear();
     int num_lines = 0;
-    rnu::vec2 min{ std::numeric_limits<float>::max() };
-    rnu::vec2 max{ std::numeric_limits<float>::lowest() };
-    for (auto const& g : _font.value()->text_set(text, &num_lines))
+    float x_max = 0;
+    for (auto const& g : _font.value()->text_set(text, &num_lines, &x_max))
     {
       auto& v = _glyphs.emplace_back();
 
@@ -31,11 +31,11 @@ namespace goop::gui
       v.scale = g.bounds.size;
       v.uv_offset = g.uvs.position;
       v.uv_scale = g.uvs.size;
-
-      min = rnu::min(v.offset, min);
-      max = rnu::max(v.offset + v.scale, max);
     }
-    set_default_size(max - min);
+
+    auto y_size = ((num_lines - 1) * _font.value()->line_height()) + _font.value()->font().ascent() * _font.value()->base_size() / _font.value()->font().units_per_em();
+
+    set_default_size({ x_max, y_size });
     set_instances(std::span(_glyphs));
   }
 }
