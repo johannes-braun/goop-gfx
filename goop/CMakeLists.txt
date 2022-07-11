@@ -1,8 +1,4 @@
-﻿# CMakeList.txt : CMake project for goop, include source and define
-# project specific logic here.
-#
-cmake_minimum_required (VERSION 3.8)
-
+﻿
 # Add source to this project's executable.
 add_library (goop STATIC
   "generic/mapped_buffer.hpp" 
@@ -41,10 +37,9 @@ add_library (goop STATIC
   "default_app.cpp" 
   "animation/smooth.hpp" 
   "animation/animation.hpp" 
-  "file/gltf__WIP.hpp" 
-  "file/gltf__WIP.cpp" 
+  "file/gltf.hpp" 
+  "file/gltf.cpp" 
   "animation/animation.cpp"
-  "EXP_experimental.hpp"
   "components/physics_component.hpp" 
   "components/transform_component.hpp" 
   "components/collider_component.hpp" 
@@ -57,7 +52,14 @@ add_library (goop STATIC
   "vectors/lines.hpp"
   "vectors/font.hpp"
   "vectors/font.cpp"
-  "vectors/font_languages.hpp" "vectors/font_features.hpp" "vectors/skyline_packer.cpp" "generic/buffer.cpp" "opengl/buffer.cpp" "opengl/geometry_format.cpp" "multi_draw.cpp" "geometry.cpp")
+  "vectors/font_languages.hpp" 
+  "vectors/font_features.hpp" 
+  "vectors/skyline_packer.cpp"
+  "generic/buffer.cpp"
+  "opengl/buffer.cpp"
+  "opengl/geometry_format.cpp"
+  "multi_draw.cpp"
+  "geometry.cpp")
 target_compile_features(goop PUBLIC cxx_std_20)
 target_link_libraries(goop PUBLIC glfw glad::glad rnu::rnu)
 target_include_directories(goop PUBLIC ${STB_INCLUDE_DIR})

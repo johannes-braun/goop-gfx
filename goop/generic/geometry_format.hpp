@@ -4,6 +4,7 @@
 #include "buffer.hpp"
 #include "draw_state.hpp"
 #include <rnu/math/math.hpp>
+#include <algorithm/utility.hpp>
 #include <optional>
 
 namespace goop
@@ -111,33 +112,25 @@ namespace goop
   template<typename T, bool N, typename MT, typename MC>
   static constexpr attribute attribute_for(std::size_t binding, MT MC::* member)
   {
-    auto const offset = (uintptr_t) & (((MC*)nullptr)->*member) - (uintptr_t)nullptr;
-    return attribute_for<T, N>(binding, offset);
+    return attribute_for<T, N>(binding, offset_of(member));
   }
 
   template<bool N, typename MT, typename MC>
   static constexpr attribute attribute_for(std::size_t binding, MT MC::* member)
   {
-    auto const offset = (uintptr_t) & (((MC*)nullptr)->*member) - (uintptr_t)nullptr;
-    return attribute_for<MT, N>(binding, offset);
+    return attribute_for<MT, N>(binding, offset_of(member));
   }
 
   template<typename T, bool N, typename MT, typename MC, size_t K>
   static constexpr attribute attribute_for(std::size_t binding, MT (MC::* member)[K], size_t index)
   {
-    MT(* const X)[K] = &(((MC*)nullptr)->*(member));
-    auto const p = (uintptr_t)(index * sizeof(MT[1]));
-    auto const offset = (uintptr_t)(X)-(uintptr_t)nullptr;
-    return attribute_for<T, N>(binding, offset + p);
+    return attribute_for<T, N>(binding, offset_of(member, index));
   }
 
   template<bool N, typename MT, typename MC, size_t K>
   static constexpr attribute attribute_for(std::size_t binding, MT (MC::* member)[K], size_t index)
   {
-    MT(* const X)[K] = &(((MC*)nullptr)->*(member));
-    auto const p = (uintptr_t)(index * sizeof(MT[1]));
-    auto const offset = (uintptr_t)(X) - (uintptr_t)nullptr;
-    return attribute_for<MT, N>(binding, offset + p);
+    return attribute_for<MT, N>(binding, offset_of(member, index));
   }
 
   enum class primitive_type

@@ -68,6 +68,8 @@ namespace goop
     buffer _indirect_buffer;
     size_t _vertex_count = 0;
     size_t _index_count = 0;
+    std::size_t _previous_hash = 0;
+    std::size_t _current_hash = 0;
     std::vector<draw_info> _draw_commands;
   };
 

@@ -3,6 +3,7 @@
 #include <rnu/math/math.hpp>
 #include <charconv>
 #include <cassert>
+#include <stdexcept>
 
 namespace goop
 {
@@ -256,7 +257,12 @@ namespace goop
   class vector_image
   {
   public:
-    void parse(std::string_view path) {
+    vector_image() = default;
+    vector_image(std::string_view path, int x, int y, int w, int h) {
+        parse(path, x, y, w, h);
+    }
+    void parse(std::string_view path, int x, int y, int w, int h) {
+      _bounds = { {x, y}, {w, h} };
       detail::parse_path_impl(path, _path, &_result);
     }
 
@@ -264,8 +270,11 @@ namespace goop
     constexpr parse_result_t result() const noexcept { return _result; }
     [[nodiscard]]
     constexpr std::vector<path_action_t> const& path() const noexcept { return _path; }
+    [[nodiscard]]
+    constexpr rnu::rect2f const& bounds() const noexcept { return _bounds; }
 
   private:
+    rnu::rect2f _bounds;
     parse_result_t _result;
     std::vector<path_action_t> _path;
   };

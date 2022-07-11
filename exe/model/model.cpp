@@ -1,4 +1,5 @@
-﻿#include "sdf_font.hpp"
+﻿#include "vector_graphics.hpp"
+#include "sdf_font.hpp"
 #include "text.hpp"
 
 #include <components/physics_component.hpp>
@@ -12,7 +13,7 @@
 #include <variant>
 #include <experimental/generator>
 #include <animation/animation.hpp>
-#include <file/gltf__WIP.hpp>
+#include <file/gltf.hpp>
 #include <rnu/ecs/ecs.hpp>
 #include <rnu/ecs/component.hpp>
 #include <random>
@@ -290,6 +291,7 @@ rnu::shared_entity load_gltf_as_entity(std::filesystem::path const& path, rnu::e
 #include <vectors/vectors.hpp>
 #include <vectors/distance.hpp>
 #include <vectors/lines.hpp>
+#include "symbol.hpp"
 
 template<goop::lines::line_segment_sequence T, typename Data>
 void emplace(T&& polygon, rnu::rect2f const& r, float scale, int padding, float sdfw, std::vector<Data>& img, int iw, int ih, int x, int y, rnu::vec2 voff = { 0,0 })
@@ -391,19 +393,19 @@ void copy_linear(std::span<T> dst, int dw, int dh, rnu::rect2f dst_rect, std::sp
 int main()
 {
 
-  goop::gui::sdf_font atlas(1024, 25, 25, goop::font("../../../../../res/SawarabiGothic-Regular.ttf"), std::array{
-    goop::character_ranges::basic_latin,
-    goop::character_ranges::c1_controls_and_latin_1_supplement,
-    goop::character_ranges::latin_extended_a,
-    goop::character_ranges::latin_extended_additional,
-    goop::character_ranges::latin_extended_b,
-    goop::character_ranges::alphabetic_presentation_forms,
-    goop::character_ranges::currency_symbols,
-    goop::character_ranges::katakana,
-    goop::character_ranges::katakana_phonetic_extensions,
-    goop::character_ranges::hiragana,
-    goop::character_ranges::make_char_range(0x79D2, 0x79D2),
-    });
+    goop::gui::sdf_font atlas(1024, 25, 25, goop::font("../../../../../res/SawarabiGothic-Regular.ttf"), std::array{
+      goop::character_ranges::basic_latin,
+      goop::character_ranges::c1_controls_and_latin_1_supplement,
+      goop::character_ranges::latin_extended_a,
+      goop::character_ranges::latin_extended_additional,
+      goop::character_ranges::latin_extended_b,
+      goop::character_ranges::alphabetic_presentation_forms,
+      goop::character_ranges::currency_symbols,
+      goop::character_ranges::katakana,
+      goop::character_ranges::katakana_phonetic_extensions,
+      goop::character_ranges::hiragana,
+      goop::character_ranges::make_char_range(0x79D2, 0x79D2),
+        });
 
 #if 0
   goop::font fnt("../../../../../res/MPLUS1p-Regular.ttf");
@@ -726,6 +728,21 @@ int main()
   int img = 0;
 
 
+  goop::vector_image const vectors[] = {
+      goop::vector_image{ "M12,21.35L10.55,20.03C5.4,15.36 2,12.27 2,8.5C2,5.41 4.42,3 7.5,3C9.24,3 10.91,3.81 12,5.08C13.09,3.81 14.76,3 16.5,3C19.58,3 22,5.41 22,8.5C22,12.27 18.6,15.36 13.45,20.03L12,21.35Z", 0, 0, 24, 24 },
+      goop::vector_image{ "M12.1,18.55L12,18.65L11.89,18.55C7.14,14.24 4,11.39 4,8.5C4,6.5 5.5,5 7.5,5C9.04,5 10.54,6 11.07,7.36H12.93C13.46,6 14.96,5 16.5,5C18.5,5 20,6.5 20,8.5C20,11.39 16.86,14.24 12.1,18.55M16.5,3C14.76,3 13.09,3.81 12,5.08C10.91,3.81 9.24,3 7.5,3C4.42,3 2,5.41 2,8.5C2,12.27 5.4,15.36 10.55,20.03L12,21.35L13.45,20.03C18.6,15.36 22,12.27 22,8.5C22,5.41 19.58,3 16.5,3Z", 0, 0, 24, 24 },
+      goop::vector_image{ "M8,5.14V19.14L19,12.14L8,5.14Z", 0, 0, 24, 24 },
+      goop::vector_image{ "M9,5A4,4 0 0,1 13,9A4,4 0 0,1 9,13A4,4 0 0,1 5,9A4,4 0 0,1 9,5M9,15C11.67,15 17,16.34 17,19V21H1V19C1,16.34 6.33,15 9,15M16.76,5.36C18.78,7.56 18.78,10.61 16.76,12.63L15.08,10.94C15.92,9.76 15.92,8.23 15.08,7.05L16.76,5.36M20.07,2C24,6.05 23.97,12.11 20.07,16L18.44,14.37C21.21,11.19 21.21,6.65 18.44,3.63L20.07,2Z", 0, 0, 24, 24 },
+      goop::vector_image{ "M22.11 21.46L2.39 1.73L1.11 3L5.2 7.09C3.25 7.5 1.85 9.27 2 11.31C2.12 12.62 2.86 13.79 4 14.45V16C4 16.55 4.45 17 5 17H7V14.88C5.72 13.58 5 11.83 5 10C5 9.11 5.18 8.23 5.5 7.4L7.12 9C6.74 10.84 7.4 12.8 9 14V16C9 16.55 9.45 17 10 17H14C14.31 17 14.57 16.86 14.75 16.64L17 18.89V19C17 19.34 16.94 19.68 16.83 20H18C18.03 20 18.06 20 18.09 20L20.84 22.73L22.11 21.46M9.23 11.12L10.87 12.76C10.11 12.46 9.53 11.86 9.23 11.12M13 15H11V12.89L13 14.89V15M10.57 7.37L9.13 5.93C10.86 4.72 13.22 4.67 15 6C16.26 6.94 17 8.43 17 10C17 11.05 16.67 12.05 16.08 12.88L14.63 11.43C14.86 11 15 10.5 15 10C15 8.34 13.67 7 12 7C11.5 7 11 7.14 10.57 7.37M17.5 14.31C18.47 13.09 19 11.57 19 10C19 8.96 18.77 7.94 18.32 7C19.63 7.11 20.8 7.85 21.46 9C22.57 10.9 21.91 13.34 20 14.45V16C20 16.22 19.91 16.42 19.79 16.59L17.5 14.31M10 18H14V19C14 19.55 13.55 20 13 20H11C10.45 20 10 19.55 10 19V18M7 19C7 19.34 7.06 19.68 7.17 20H6C5.45 20 5 19.55 5 19V18H7V19Z", 0, 0, 24, 24 }
+  };
+  goop::vector_graphics_holder holder(512, 25, vectors);
+
+
+  goop::gui::symbol my_symbol;
+  my_symbol.set_holder(holder);
+  my_symbol.set_icon(3);
+  my_symbol.set_scale(1);
+
 
   goop::gui::text fps_text;
   fps_text.set_font(atlas);
@@ -735,10 +752,6 @@ int main()
   title_text.set_font(atlas);
   title_text.set_size(42);
   title_text.set_text(L"GOOP Graphics Whatever");
-
-
-
-
 
 
 
@@ -828,9 +841,9 @@ int main()
       nX = 0.0;
       fn = 0;
     }
-
-    title_text.draw(state, 0, 700, 600, 100);
-    fps_text.draw(state, 0, 0, 400, 300);
+    my_symbol.draw(state, 40, 40);
+    title_text.draw(state, 0, 700);
+    fps_text.draw(state, 0, 0);
 
     img = app.end_frame();
   }

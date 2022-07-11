@@ -84,7 +84,6 @@ namespace goop::gui
     h = _height + 1;
     image.resize(w * h);
 
-
     std::for_each(std::execution::par_unseq, begin(_infos), end(_infos), [this, w, h, &image](std::pair<glyph_id, glyph_info> const& pair) {
 
       auto const& [ch, info] = pair;

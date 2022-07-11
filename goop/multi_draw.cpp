@@ -15,10 +15,12 @@ namespace goop
   }
   void multi_draw_base::clear_queue()
   {
+    _current_hash = 0;
     _draw_commands.clear();
   }
   void multi_draw_base::enqueue(draw_info const& info)
   {
+    hash_combine(_current_hash, info.base_instance, info.base_vertex, info.count, info.first_index, info.instance_count);
     _draw_commands.push_back(info);
   }
   void multi_draw_base::draw(draw_state_base& state, primitive_type primitive)
@@ -26,7 +28,12 @@ namespace goop
     if (!_geometry)
       return;
 
-    _indirect_buffer->load(std::span(_draw_commands));
+    if (_current_hash != _previous_hash)
+    {
+        _indirect_buffer->load(std::span(_draw_commands));
+        _previous_hash = _current_hash;
+    }
+
     _geometry->get().use_buffer(state, 0, _vertex_buffer);
     _geometry->get().use_index_buffer(state, _index_size.value(), _index_buffer);
     _geometry->get().draw(state, primitive, _indirect_buffer, _draw_commands.size());
