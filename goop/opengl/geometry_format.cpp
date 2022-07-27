@@ -132,20 +132,36 @@ namespace goop::opengl
     _strides[binding] = stride;
     glVertexArrayBindingDivisor(handle(), binding, repeat == attribute_repetition::per_instance ? 1 : 0);
   }
-  void geometry_format::draw(draw_state_base& state, primitive_type type, draw_info const& info)
+  void geometry_format::draw_indexed(draw_state_base& state, primitive_type type, draw_info_indexed const& info)
   {
     glBindVertexArray(handle());
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
     glDrawElementsIndirect(determine_mode(type), _index_type, &info);
   }
-  void geometry_format::draw(draw_state_base& state, primitive_type type, buffer_base const& indirect_buffer, std::size_t count, std::ptrdiff_t offset)
+  void geometry_format::draw_indexed(draw_state_base& state, primitive_type type, buffer_base const& indirect_buffer, std::size_t count, std::ptrdiff_t offset)
   {
     glBindVertexArray(handle());
     auto const buf = static_cast<buffer const&>(indirect_buffer).handle();
     void const* offset_ptr = nullptr;
     std::memcpy(&offset_ptr, &offset, sizeof(offset));
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, buf);
-    glMultiDrawElementsIndirect(determine_mode(type), _index_type, offset_ptr, count, sizeof(draw_info));
+    glMultiDrawElementsIndirect(determine_mode(type), _index_type, offset_ptr, count, sizeof(draw_info_indexed));
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+  }
+  void geometry_format::draw_array(draw_state_base& state, primitive_type type, draw_info_array const& info)
+  {
+    glBindVertexArray(handle());
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+    glDrawArraysIndirect(determine_mode(type), &info);
+  }
+  void geometry_format::draw_array(draw_state_base& state, primitive_type type, buffer_base const& indirect_buffer, std::size_t count, std::ptrdiff_t offset)
+  {
+    glBindVertexArray(handle());
+    auto const buf = static_cast<buffer const&>(indirect_buffer).handle();
+    void const* offset_ptr = nullptr;
+    std::memcpy(&offset_ptr, &offset, sizeof(offset));
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, buf);
+    glMultiDrawArraysIndirect(determine_mode(type), offset_ptr, count, sizeof(draw_info_array));
     glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
   }
 }

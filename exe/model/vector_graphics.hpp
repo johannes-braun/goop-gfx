@@ -2,6 +2,7 @@
 
 #include <graphics.hpp>
 #include <vectors/vectors.hpp>
+#include "atlas_cache.hpp"
 
 namespace goop
 {

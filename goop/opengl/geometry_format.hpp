@@ -17,8 +17,10 @@ namespace goop::opengl
     void use_index_buffer(draw_state_base& state, attribute_format::bit_width bits, handle_ref<buffer_base> buffer) override;
     void use_buffer(draw_state_base& state, std::size_t binding, handle_ref<buffer_base> buffer, std::ptrdiff_t offset) override;
     void set_binding(std::size_t binding, std::size_t stride, attribute_repetition repeat) override;
-    void draw(draw_state_base& state, primitive_type type, draw_info const& info) override;
-    void draw(draw_state_base& state, primitive_type type, buffer_base const& indirect_buffer, std::size_t count, std::ptrdiff_t offset) override;
+    void draw_indexed(draw_state_base& state, primitive_type type, draw_info_indexed const& info) override;
+    void draw_indexed(draw_state_base& state, primitive_type type, buffer_base const& indirect_buffer, std::size_t count, std::ptrdiff_t offset = 0) override;
+    void draw_array(draw_state_base& state, primitive_type type, draw_info_array const& info) override;
+    void draw_array(draw_state_base& state, primitive_type type, buffer_base const& indirect_buffer, std::size_t count, std::ptrdiff_t offset = 0) override;
 
   private:
     std::vector<std::size_t> _strides;

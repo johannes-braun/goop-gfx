@@ -88,12 +88,14 @@ namespace goop::opengl
 
   void texture::allocate(texture_type type, data_type data, int w, int mipmap_levels)
   {
+    _dimensions = { w, 1, 1 };
     glCreateTextures(get_texture_type(type), 1, &handle());
     glTextureStorage1D(handle(), mipmap_levels == 0 ? num_mipmaps(w, 1, 1) : mipmap_levels, get_data_type(data), w);
   }
 
   void texture::allocate(texture_type type, data_type data, int w, int h, int mipmap_levels)
   {
+    _dimensions = { w, h, 1 };
     glCreateTextures(get_texture_type(type), 1, &handle());
     if (type == texture_type::t2d_ms)
     {
@@ -107,6 +109,7 @@ namespace goop::opengl
 
   void texture::allocate(texture_type type, data_type data, int w, int h, int d, int mipmap_levels)
   {
+    _dimensions = { w, h, d };
     glCreateTextures(get_texture_type(type), 1, &handle());
     if (type == texture_type::t2d_ms_array)
     {
@@ -162,5 +165,10 @@ namespace goop::opengl
   void texture::bind(draw_state_base& state, std::uint32_t binding_point) const
   {
     glBindTextureUnit(binding_point, handle());
+  }
+
+  rnu::vec3i texture::dimensions() const
+  {
+    return _dimensions;
   }
 }

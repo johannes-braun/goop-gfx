@@ -18,7 +18,7 @@ namespace goop
     _current_hash = 0;
     _draw_commands.clear();
   }
-  void multi_draw_base::enqueue(draw_info const& info)
+  void multi_draw_base::enqueue(draw_info_indexed const& info)
   {
     hash_combine(_current_hash, info.base_instance, info.base_vertex, info.count, info.first_index, info.instance_count);
     _draw_commands.push_back(info);
@@ -36,6 +36,6 @@ namespace goop
 
     _geometry->get().use_buffer(state, 0, _vertex_buffer);
     _geometry->get().use_index_buffer(state, _index_size.value(), _index_buffer);
-    _geometry->get().draw(state, primitive, _indirect_buffer, _draw_commands.size());
+    _geometry->get().draw_indexed(state, primitive, _indirect_buffer, _draw_commands.size());
   }
 }

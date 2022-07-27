@@ -623,7 +623,7 @@ int main()
 
       if (i == 0)
       {
-        state->set_viewport(0, 0, 2048, 2048);
+        state->set_viewport({ 0, 0, 2048, 2048 });
         shadow.begin(state, proj * view);
         glColorMaski(0,
           GL_FALSE,

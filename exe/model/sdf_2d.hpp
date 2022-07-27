@@ -4,6 +4,7 @@
 #include <optional>
 #include <vector>
 #include "graphics.hpp"
+#include "dirty_info.hpp"
 
 namespace goop::gui
 {
@@ -20,6 +21,7 @@ namespace goop::gui
     void set_outer_smoothness(float outer_smoothness);
     void set_inner_smoothness(float inner_smoothness);
 
+    float scale() const;
     rnu::vec2 size() const;
 
   protected:
@@ -37,14 +39,12 @@ namespace goop::gui
 
       rnu::vec4ui8 color = { 255, 255, 255, 255 };
       rnu::vec4ui8 border_color = { 0, 0, 0, 255 };
-      float border_offset = -0.1;
-      float outer_smoothness = 0.707;
+      float border_offset = 0.3;
+      float outer_smoothness = 1;
 
       float inner_smoothness = 0.707;
       float sdf_width = 0;
     };
-
-    static constexpr auto X = sizeof(sdf_info);
 
     void set_instances(std::span<sdf_instance const> instances);
     void set_sdf_width(float width);
@@ -52,35 +52,9 @@ namespace goop::gui
     void set_default_size(rnu::vec2 size);
 
   private:
-    template<typename T, std::convertible_to<T> V>
-    void set_info(T sdf_info::* var, V&& value) requires requires(V v) {
-      { (v != v).any() };
-    }
-    {
-      auto& last = _info.*var;
-      if ((last != value).any())
-      {
-        last = value;
-        _info_dirty = true;
-      }
-    }
+    dirty_info<sdf_info> _info;
 
-    template<typename T, std::convertible_to<T> V>
-    void set_info(T sdf_info::* var, V&& value)
-    {
-      auto& last = _info.*var;
-      if (last != value)
-      {
-        last = value;
-        _info_dirty = true;
-      }
-    }
-
-    sdf_info _info;
-    bool _info_dirty = true;
-
-
-    rnu::vec4i _margin = rnu::vec4i(8, 8, 8, 8);
+    rnu::vec4i _margin = rnu::vec4i(0,0,0,0);
     size_t _num_instances = 0;
     texture _atlas;
     buffer _instances;

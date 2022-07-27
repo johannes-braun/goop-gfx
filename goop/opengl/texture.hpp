@@ -25,5 +25,9 @@ namespace goop::opengl
 
     virtual void generate_mipmaps() override;
     virtual void bind(draw_state_base& state, std::uint32_t binding_point) const override;
+    virtual rnu::vec3i dimensions() const override;
+
+  private:
+    rnu::vec3i _dimensions{};
   };
 }

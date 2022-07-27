@@ -30,7 +30,7 @@ layout(location = 4) in vec2 uv_offset;
 
 )"
 SDF_INFO_BUFFER_STR
-R"(
+R"( 
 
 out gl_PerVertex
 {
@@ -70,9 +70,9 @@ void main()
   float half_smoothness_inner = smoothness_inner / 2.0;
   float half_smoothness_outer = smoothness_outer / 2.0;
 
-  float border = info.border_width / info.scale / sdf_width;
+  float border = info.border_width / info.scale / sdf_width / 2;
   float half_border = border / 2.0;
-  float border_offset = info.border_offset / info.scale / sdf_width; 
+  float border_offset = -info.border_offset / info.scale / sdf_width; 
 
   b = smoothstep(0.5 + border_offset + half_border - half_smoothness_inner, 0.5 + border_offset + half_border + half_smoothness_inner, a);
   a = smoothstep(0.5 + border_offset - half_border - half_smoothness_outer, 0.5 + border_offset - half_border + half_smoothness_outer, a);
@@ -83,11 +83,15 @@ void main()
   vec4 mixed_color = mix(border_color, inner_color, border == 0.0 ? 1.0 : b);
 
   color = vec4(mixed_color.rgb, mixed_color.a * a);
+  //color.rgb *= color.a;
 }
 )";
 
   void sdf_2d::draw(draw_state_base& state, int x, int y, int w, int h)
   {
+    if (_info.info().color == rnu::vec4(0, 0, 0, 0))
+      return;
+
     thread_local buffer vtb{ rnu::vec2{0, 0}, rnu::vec2{1, 0}, rnu::vec2{0, 1}, rnu::vec2{1, 1} };
     thread_local buffer idb{ 0u, 1u, 2u, 2u, 1u, 3u };
     thread_local geometry_format geo = [] {
@@ -123,31 +127,46 @@ void main()
     }();
 
     // Todo: remove gl calls
-    GLint vp[4];
-    glGetIntegerv(GL_VIEWPORT, vp);
 
-    rnu::vec2 const actual_size(w + 2 * (_info.outer_smoothness - _info.border_offset), h + 2 * (_info.outer_smoothness - _info.border_offset));
+    rnu::rect2f const viewport{
+      .position = {x + _margin.x, y + _margin.y},
+      .size = {w + 2 * (_info.info().outer_smoothness - _info.info().border_offset), h + 2 * (_info.info().outer_smoothness - _info.info().border_offset)}
+    };
+    rnu::rect2f const scissor{
+      .position = {x, y},
+      .size = {viewport.size.x + _margin.x + _margin.z, viewport.size.y + _margin.y + _margin.w}
+    };
 
-    glEnable(GL_SCISSOR_TEST);
-    glViewport(x + _margin.x, y + _margin.y, actual_size.x, actual_size.y);
-    glScissor(x, y, actual_size.x + _margin.x + _margin.z, actual_size.y + _margin.y + _margin.w);
-    /*glClearColor(0.2, 0.2, 0.2, 1.0);
-    glClear(GL_COLOR_BUFFER_BIT);*/
-    glDisable(GL_CULL_FACE);
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    auto const [sw, sh] = state.current_surface_size();
+    auto posv = viewport.position;
+    //posv.y = sh - posv.y - viewport.size.y;
+    auto poss = scissor.position;
+    //poss.y = sh - poss.y - scissor.size.y;
+
+
+    state.set_viewport({ posv, viewport.size });
+    state.set_scissor(rnu::rect2f{ poss, scissor.size });
+    state.set_culling_mode(culling_mode::none);
+    /**/state.set_blending(blending_mode{
+      .src_color = {false, blending::src_alpha},
+      .dst_color = {true, blending::src_alpha},
+      .src_alpha = {false, blending::one},
+      .dst_alpha = {true, blending::src_alpha}, // 0 + dst * src
+      .equation_color = blending_equation::src_plus_dst,
+      .equation_alpha = blending_equation::src_plus_dst
+      });
+
     pipeline->bind(state);
     _atlas->bind(state, 0);
     s->bind(state, 0);
-    if (_last_resolution != actual_size)
+
+    _info.set(&sdf_info::resolution, viewport.size);
+
+    if (_info.dirty())
     {
-      _last_resolution = actual_size;
-      _info_dirty = true;
-      _info.resolution = _last_resolution;
-    }
-    if (std::exchange(_info_dirty, false))
-    {
-      _block_info->write(_info);
+      _block_info->write(_info.info());
+      _info.clear();
     }
     _block_info->bind(state, 0);
     state.set_depth_test(false);
@@ -155,54 +174,50 @@ void main()
     geo->use_buffer(state, 0, vtb);
     geo->use_buffer(state, 1, _instances);
     geo->use_index_buffer(state, attribute_format::bit_width::x32, idb);
-    geo->draw(state, primitive_type::triangles, { 6, std::uint32_t(_num_instances), 0, 0, 0 });
-    glViewport(vp[0], vp[1], vp[2], vp[3]);
-    glDisable(GL_SCISSOR_TEST);
+    geo->draw_indexed(state, primitive_type::triangles, { 6, std::uint32_t(_num_instances), 0, 0, 0 });
+    
+    state.set_scissor(std::nullopt);
+    state.set_blending(std::nullopt);
   }
 
   void sdf_2d::draw(draw_state_base& state, int x, int y)
   {
-    draw(state, x, y, std::ceil(_size.x * _info.scale), std::ceil(_size.y * _info.scale));
+    draw(state, x, y, std::ceil(_size.x * _info.info().scale), std::ceil(_size.y * _info.info().scale));
   }
 
   void sdf_2d::set_scale(float scale)
   {
-    set_info(&sdf_info::scale, scale);
-  }
-
-  static constexpr rnu::vec4ui8 norm_color(rnu::vec4 color)
-  {
-    return rnu::vec4ui8(rnu::clamp(color * 255, 0, 255));
+    _info.set(&sdf_info::scale, scale);
   }
 
   void sdf_2d::set_color(rnu::vec4 color_rgba)
   {
-    set_info(&sdf_info::color, norm_color(color_rgba));
+    _info.set(&sdf_info::color, norm_color(color_rgba));
   }
   void sdf_2d::set_border_color(rnu::vec4 border_color)
   {
-    set_info(&sdf_info::border_color, norm_color(border_color));
+    _info.set(&sdf_info::border_color, norm_color(border_color));
   }
   void sdf_2d::set_border_width(float border_width)
   {
-    set_info(&sdf_info::border_width, border_width);
+    _info.set(&sdf_info::border_width, border_width);
   }
   void sdf_2d::set_border_offset(float border_offset)
   {
-    set_info(&sdf_info::border_offset, border_offset);
+    _info.set(&sdf_info::border_offset, border_offset);
   }
   void sdf_2d::set_outer_smoothness(float outer_smoothness)
   {
-    set_info(&sdf_info::outer_smoothness, outer_smoothness);
+    _info.set(&sdf_info::outer_smoothness, outer_smoothness);
   }
   void sdf_2d::set_inner_smoothness(float inner_smoothness)
   {
-    set_info(&sdf_info::inner_smoothness, inner_smoothness);
+    _info.set(&sdf_info::inner_smoothness, inner_smoothness);
   }
   rnu::vec2 sdf_2d::size() const
   {
-    return _size * _info.scale + rnu::vec2(_margin.x, _margin.y) + rnu::vec2(_margin.z, _margin.w) +
-      rnu::vec2(2 * (_info.outer_smoothness - _info.border_offset));
+    return _size * _info.info().scale + rnu::vec2(_margin.x, _margin.y) + rnu::vec2(_margin.z, _margin.w) +
+      rnu::vec2(2 * (_info.info().outer_smoothness - _info.info().border_offset));
   }
   void sdf_2d::set_instances(std::span<sdf_instance const> instances)
   {
@@ -211,7 +226,7 @@ void main()
   }
   void sdf_2d::set_sdf_width(float width)
   {
-    set_info(&sdf_info::sdf_width, width);
+    _info.set(&sdf_info::sdf_width, width);
   }
   void sdf_2d::set_atlas(texture t)
   {
@@ -220,5 +235,10 @@ void main()
   void sdf_2d::set_default_size(rnu::vec2 size)
   {
     _size = size;
+  }
+
+  float sdf_2d::scale() const
+  {
+    return _info.info().scale;
   }
 }

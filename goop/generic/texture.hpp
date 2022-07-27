@@ -50,6 +50,7 @@ namespace goop
     virtual void set_data(int level, int xoff, int yoff, int w, int h, int components, std::span<float const> pixel_data) = 0;
     virtual void set_data(int level, int xoff, int yoff, int zoff, int w, int h, int d, int components, std::span<std::uint8_t const> pixel_data) = 0;
     virtual void set_data(int level, int xoff, int yoff, int zoff, int w, int h, int d, int components, std::span<float const> pixel_data) = 0;
+    virtual rnu::vec3i dimensions() const = 0;
     virtual void generate_mipmaps() = 0;
     virtual void bind(draw_state_base& state, std::uint32_t binding_point) const = 0;
   };

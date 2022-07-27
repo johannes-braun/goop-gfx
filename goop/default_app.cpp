@@ -50,7 +50,7 @@ namespace goop
     _draw_textures.color = _texture_provider.acquire(goop::texture_type::t2d_ms, goop::data_type::rgba16f, window_width, window_height, 4);
     _draw_textures.depth_stencil = _texture_provider.acquire(goop::texture_type::t2d_ms, goop::data_type::d24s8, window_width, window_height, 4);
 
-    _draw_state->set_viewport(0, 0, window_width, window_height);
+    _draw_state->set_viewport({ {0, 0}, {window_width, window_height} });
     _default_render_target->bind_texture(0, _draw_textures.color);
     _default_render_target->bind_depth_stencil_texture(_draw_textures.depth_stencil);
     _default_render_target->activate(_draw_state);

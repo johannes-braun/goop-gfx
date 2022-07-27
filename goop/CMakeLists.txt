@@ -61,7 +61,7 @@ add_library (goop STATIC
   "multi_draw.cpp"
   "geometry.cpp")
 target_compile_features(goop PUBLIC cxx_std_20)
-target_link_libraries(goop PUBLIC glfw glad::glad rnu::rnu)
+target_link_libraries(goop PUBLIC glfw glad::glad rnu::rnu nlohmann_json nlohmann_json::nlohmann_json)
 target_include_directories(goop PUBLIC ${STB_INCLUDE_DIR})
 target_include_directories(goop PUBLIC ${TINYGLTF_INCLUDE_DIRS})
 target_include_directories(goop PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

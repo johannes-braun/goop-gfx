@@ -141,7 +141,7 @@ namespace goop
     _drawer->clear_queue();
     for (auto const& i : offsets)
     {
-      draw_info const info{
+      draw_info_indexed const info{
         .count = std::uint32_t(i.index_count),
         .instance_count = 1,
         .first_index = std::uint32_t(i.index_offset),

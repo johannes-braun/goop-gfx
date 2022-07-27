@@ -142,12 +142,20 @@ namespace goop
     triangle_strip
   };
 
-  struct draw_info
+  struct draw_info_indexed
   {
     std::uint32_t count;
     std::uint32_t instance_count;
     std::uint32_t first_index;
     std::uint32_t base_vertex;
+    std::uint32_t base_instance;
+  };
+
+  struct draw_info_array
+  {
+    std::uint32_t count;
+    std::uint32_t instance_count;
+    std::uint32_t first_index;
     std::uint32_t base_instance;
   };
 
@@ -158,7 +166,9 @@ namespace goop
     virtual void set_binding(std::size_t binding, std::size_t stride, attribute_repetition repeat = attribute_repetition::per_vertex) = 0;
     virtual void use_index_buffer(draw_state_base& state, attribute_format::bit_width bits, handle_ref<buffer_base> buffer) = 0;
     virtual void use_buffer(draw_state_base& state, std::size_t binding, handle_ref<buffer_base> buffer, std::ptrdiff_t offset = 0) = 0;
-    virtual void draw(draw_state_base& state, primitive_type type, draw_info const& info) = 0;
-    virtual void draw(draw_state_base& state, primitive_type type, buffer_base const& indirect_buffer, std::size_t count, std::ptrdiff_t offset = 0) = 0;
+    virtual void draw_indexed(draw_state_base& state, primitive_type type, draw_info_indexed const& info) = 0;
+    virtual void draw_indexed(draw_state_base& state, primitive_type type, buffer_base const& indirect_buffer, std::size_t count, std::ptrdiff_t offset = 0) = 0;
+    virtual void draw_array(draw_state_base& state, primitive_type type, draw_info_array const& info) = 0;
+    virtual void draw_array(draw_state_base& state, primitive_type type, buffer_base const& indirect_buffer, std::size_t count, std::ptrdiff_t offset = 0) = 0;
   };
 }

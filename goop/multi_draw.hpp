@@ -19,7 +19,7 @@ namespace goop
     }
 
     template<typename T, std::integral I>
-    draw_info append_data(std::span<T> data, std::span<I> indices)
+    draw_info_indexed append_data(std::span<T> data, std::span<I> indices)
     {
       auto const index_type = [&] {
         switch (sizeof(I))
@@ -42,7 +42,7 @@ namespace goop
 
       _index_size = index_type;
 
-      draw_info info{
+      draw_info_indexed info{
         .count = std::uint32_t(indices.size()),
         .instance_count = 1,
         .first_index = std::uint32_t(_index_count),
@@ -57,7 +57,7 @@ namespace goop
     }
 
     void clear_queue();
-    void enqueue(draw_info const& info);
+    void enqueue(draw_info_indexed const& info);
     void draw(draw_state_base& state, primitive_type primitive);
 
   private:
@@ -70,7 +70,7 @@ namespace goop
     size_t _index_count = 0;
     std::size_t _previous_hash = 0;
     std::size_t _current_hash = 0;
-    std::vector<draw_info> _draw_commands;
+    std::vector<draw_info_indexed> _draw_commands;
   };
 
   using multi_draw = handle<multi_draw_base, multi_draw_base>;

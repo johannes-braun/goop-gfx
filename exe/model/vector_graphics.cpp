@@ -73,7 +73,6 @@ namespace goop
     result->allocate(goop::texture_type::t2d, goop::data_type::r8unorm, _width, _height, 1);
     result->set_data(0, 0, 0, _width, _height, 1, _image);
     _texture = std::move(result);
-    stbi_write_jpg("../../../../../vector_atlas.jpg", _width, _height, 1, _image.data(), 95);
   }
 
   vector_graphics_holder_base::set_symbol_t vector_graphics_holder_base::get(std::size_t index) const
